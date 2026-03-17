@@ -45,7 +45,7 @@ async function paddleRequest(path, options = {}) {
   const res  = await fetch(`${PADDLE_API_URL}${path}`, {
     ...options,
     headers: {
-      'Authorization': `Bearer ${process.env.PADDLE_API_KEY}`,
+      'Authorization': `Bearer ${(process.env.PADDLE_API_KEY || '').trim()}`,
       'Content-Type':  'application/json',
       'Paddle-Version': '1',
       ...(options.headers || {}),
