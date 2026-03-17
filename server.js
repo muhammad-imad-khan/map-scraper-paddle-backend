@@ -1,235 +1,174 @@
 // ═══════════════════════════════════════════════════════════════
-//  Maps Lead Scraper — Paddle Payment Backend
-//
-//  Why Paddle?
-//  • Works for Pakistan merchants (SWIFT / Payoneer payouts)
-//  • Merchant of Record — handles VAT/GST globally for you
-//  • No Stripe dependency
-//
+//  Maps Lead Scraper — Paddle Payment Backend (Fixed)
 //  npm install express cors dotenv crypto
-//  Deploy: Vercel / Railway / Render (free tier works)
 // ═══════════════════════════════════════════════════════════════
 
-import express  from 'express';
-import cors     from 'cors';
-import crypto   from 'crypto';
-import dotenv   from 'dotenv';
+import express from 'express';
+import cors    from 'cors';
+import crypto  from 'crypto';
+import dotenv  from 'dotenv';
 dotenv.config();
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── In-memory license store (replace with a DB in production) ──
-// For production: use Supabase free tier or PlanetScale free tier
-const licenseStore = new Map(); // licenseKey → { credits, productId, used }
+const PADDLE_ENV     = process.env.PADDLE_ENV || 'sandbox';
+const PADDLE_API_URL = PADDLE_ENV === 'production'
+  ? 'https://api.paddle.com'
+  : 'https://sandbox-api.paddle.com';
 
-// ── Credit packs — match your Paddle product IDs ───────────────
-// Create these products in your Paddle dashboard at paddle.com
+console.log(`[startup] Paddle env: ${PADDLE_ENV} → ${PADDLE_API_URL}`);
+
+const licenseStore = new Map();
+
+// PUT YOUR REAL PADDLE PRICE IDs HERE (from Paddle Dashboard → Catalog → Products → Prices)
 const PACKS = {
-  'pro_01kkwtmnxnjcp2ja76dps3wm63':  { credits: 100,  price: '$5',  label: 'Starter Pack' },
-  'pro_01kkwtnk3zrp25a50jbzhsm6hr':  { credits: 500,  price: '$19', label: 'Pro Pack'     },
-  'pro_01kkwtq5fexkarzr641bg9qj85': { credits: 1000, price: '$35', label: 'Agency Pack'  },
+  [process.env.PRICE_ID_100  || 'pri_placeholder_100']:  { credits: 100,  price: '$5',  label: 'Starter Pack' },
+  [process.env.PRICE_ID_500  || 'pri_placeholder_500']:  { credits: 500,  price: '$19', label: 'Pro Pack'     },
+  [process.env.PRICE_ID_1000 || 'pri_placeholder_1000']: { credits: 1000, price: '$35', label: 'Agency Pack'  },
 };
-// Replace pri_100 / pri_500 / pri_1000 with your actual Paddle Price IDs
-// Found in Paddle Dashboard → Catalog → Products → your product → Price ID
 
-// ── CORS — allow extension + your website ─────────────────────
 app.use(cors({
   origin: (origin, cb) => {
-    const allowed = [
-      process.env.SITE_ORIGIN,
-      'http://localhost:3000',
-      'http://localhost:5500',
-    ].filter(Boolean);
-    if (!origin || allowed.includes(origin) || (origin && origin.startsWith('chrome-extension://'))) {
-      return cb(null, true);
-    }
-    cb(new Error('CORS'), false);
+    if (!origin) return cb(null, true);
+    if (origin.startsWith('chrome-extension://')) return cb(null, true);
+    const allowed = [process.env.SITE_ORIGIN, 'http://localhost:3000', 'http://localhost:5500'].filter(Boolean);
+    cb(null, allowed.includes(origin) || !process.env.SITE_ORIGIN);
   }
 }));
 
-// Raw body needed for webhook signature verification
 app.use('/api/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// ──────────────────────────────────────────────────────────────
-//  GET /api/packs
-//  Returns available credit packs (no secrets exposed)
-// ──────────────────────────────────────────────────────────────
-app.get('/api/packs', (_req, res) => {
-  const packs = Object.entries(PACKS).map(([id, info]) => ({
-    priceId: id,
-    ...info
-  }));
-  res.json({ packs });
+async function paddleRequest(path, options = {}) {
+  const res  = await fetch(`${PADDLE_API_URL}${path}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${process.env.PADDLE_API_KEY}`,
+      'Content-Type':  'application/json',
+      'Paddle-Version': '1',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const msg = data?.error?.detail || data?.error?.code || JSON.stringify(data);
+    throw Object.assign(new Error(`Paddle ${res.status}: ${msg}`), { paddle: data?.error });
+  }
+  return data;
+}
+
+app.get('/', (_req, res) => {
+  res.json({ name: 'Maps Lead Scraper API', version: '2.0.0', env: PADDLE_ENV,
+    routes: ['/api/health', '/api/packs', '/api/checkout', '/api/verify-license', '/api/webhook'] });
 });
 
-// ──────────────────────────────────────────────────────────────
-//  POST /api/checkout
-//  Body: { priceId: "pri_100" }
-//  Returns: { checkoutUrl }
-//
-//  Uses Paddle's hosted checkout — no PCI scope on your server
-// ──────────────────────────────────────────────────────────────
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, licenses: licenseStore.size, env: PADDLE_ENV });
+});
+
+app.get('/api/packs', (_req, res) => {
+  res.json({ packs: Object.entries(PACKS).map(([priceId, info]) => ({ priceId, ...info })) });
+});
+
 app.post('/api/checkout', async (req, res) => {
   try {
     const { priceId } = req.body;
-    if (!priceId || !PACKS[priceId]) {
-      return res.status(400).json({ error: 'Invalid price ID' });
-    }
 
-    // Paddle Billing API v1 — create a checkout
-    const response = await fetch('https://api.paddle.com/transactions', {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${process.env.PADDLE_API_KEY}`,
-      },
+    if (!priceId) return res.status(400).json({ error: 'Missing priceId' });
+    if (!PACKS[priceId]) return res.status(400).json({ error: 'Invalid price ID', provided: priceId });
+    if (!process.env.PADDLE_API_KEY) return res.status(500).json({ error: 'PADDLE_API_KEY not configured' });
+
+    const data = await paddleRequest('/transactions', {
+      method: 'POST',
       body: JSON.stringify({
         items: [{ price_id: priceId, quantity: 1 }],
-        checkout: {
-          url: process.env.SUCCESS_URL || 'https://mapsleadscraper.com/success',
-        },
-        custom_data: { priceId }, // we'll read this in the webhook
+        custom_data: { priceId },
       }),
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[checkout] Paddle error:', data);
-      return res.status(500).json({ error: data?.error?.detail || 'Checkout failed' });
-    }
-
-    // Paddle returns checkout URL in data.data.checkout.url
     const checkoutUrl = data?.data?.checkout?.url;
+
     if (!checkoutUrl) {
-      return res.status(500).json({ error: 'No checkout URL returned' });
+      console.error('[checkout] No checkout.url in response:', JSON.stringify(data?.data));
+      return res.status(500).json({
+        error: 'No checkout URL returned from Paddle',
+        fix: 'Set a Default payment link: Paddle Dashboard → Checkout → Checkout settings → Default payment link',
+        paddleData: data?.data,
+      });
     }
 
     res.json({ checkoutUrl });
 
   } catch (err) {
     console.error('[checkout]', err.message);
-    res.status(500).json({ error: 'Server error' });
+    const code = err?.paddle?.code || '';
+    const hints = {
+      'transaction_default_checkout_url_not_set': 'Paddle → Checkout → Checkout settings → set Default payment link',
+      'transaction_payout_account_required':       'Paddle → Financial → Payout account → connect your bank/Payoneer',
+      'transaction_checkout_not_enabled':          'Contact Paddle support to enable checkout for your account',
+    };
+    res.status(500).json({ error: err.message, fix: hints[code] || 'Check your Paddle dashboard and server logs' });
   }
 });
 
-// ──────────────────────────────────────────────────────────────
-//  POST /api/webhook  (Paddle → your server)
-//  Paddle sends this when payment completes
-//  Generates a license key and stores it
-//
-//  Set this URL in Paddle Dashboard → Developer → Webhooks
-//  Events to subscribe: transaction.completed
-// ──────────────────────────────────────────────────────────────
 app.post('/api/webhook', async (req, res) => {
   try {
-    // Verify Paddle signature
-    const signature  = req.headers['paddle-signature'];
-    const webhookKey = process.env.PADDLE_WEBHOOK_SECRET;
-
-    if (webhookKey && signature) {
-      const [, ts]   = signature.match(/ts=(\d+)/)  || [];
-      const [, h1]   = signature.match(/h1=([a-f0-9]+)/) || [];
-      const payload  = `${ts}:${req.body.toString()}`;
-      const expected = crypto.createHmac('sha256', webhookKey).update(payload).digest('hex');
-      if (expected !== h1) {
-        console.warn('[webhook] Invalid signature');
-        return res.status(401).json({ error: 'Invalid signature' });
+    const sig = req.headers['paddle-signature'];
+    const key = process.env.PADDLE_WEBHOOK_SECRET;
+    if (key && sig) {
+      const [, ts] = sig.match(/ts=(\d+)/) || [];
+      const [, h1] = sig.match(/h1=([a-f0-9]+)/) || [];
+      if (ts && h1) {
+        const expected = crypto.createHmac('sha256', key).update(`${ts}:${req.body}`).digest('hex');
+        if (expected !== h1) return res.status(401).json({ error: 'Invalid signature' });
       }
     }
 
     const event = JSON.parse(req.body.toString());
+    console.log('[webhook]', event.event_type);
 
     if (event.event_type === 'transaction.completed') {
-      const txn      = event.data;
-      const priceId  = txn?.custom_data?.priceId || txn?.items?.[0]?.price?.id;
-      const pack     = PACKS[priceId];
+      const txn     = event.data;
+      const priceId = txn?.custom_data?.priceId || txn?.items?.[0]?.price?.id;
+      const pack    = PACKS[priceId];
+      const email   = txn?.customer?.email;
 
-      if (!pack) {
-        console.warn('[webhook] Unknown priceId:', priceId);
-        return res.json({ ok: true }); // ack to Paddle anyway
+      if (pack) {
+        const key = generateLicenseKey();
+        licenseStore.set(key, { credits: pack.credits, label: pack.label, priceId, email, usedAt: null, createdAt: Date.now(), txnId: txn.id });
+        console.log(`[webhook] ✅ License generated: ${key} | ${pack.label} | ${email}`);
+        // TODO: email the license key → see README for Resend setup
       }
-
-      // Generate a unique license key
-      const licenseKey = generateLicenseKey();
-      const email      = txn?.customer?.email || 'unknown';
-
-      licenseStore.set(licenseKey, {
-        credits:   pack.credits,
-        label:     pack.label,
-        priceId,
-        email,
-        usedAt:    null,
-        createdAt: Date.now(),
-        txnId:     txn.id,
-      });
-
-      console.log(`[webhook] License generated: ${licenseKey} (${pack.label}) for ${email}`);
-
-      // TODO: email the license key to the customer
-      // Use Resend / Postmark / SendGrid free tier — see README
     }
-
     res.json({ ok: true });
-
   } catch (err) {
     console.error('[webhook]', err.message);
     res.status(500).json({ error: 'Webhook error' });
   }
 });
 
-// ──────────────────────────────────────────────────────────────
-//  POST /api/verify-license
-//  Body: { licenseKey: "MXXX-XXXX-XXXX-XXXX" }
-//  Returns: { valid, credits, label }
-// ──────────────────────────────────────────────────────────────
 app.post('/api/verify-license', (req, res) => {
-  try {
-    const { licenseKey } = req.body;
-    if (!licenseKey) return res.status(400).json({ valid: false, error: 'Missing key' });
+  const { licenseKey } = req.body;
+  if (!licenseKey) return res.status(400).json({ valid: false, error: 'Missing license key' });
+  if (licenseKey.startsWith('TEST-') && licenseKey.length >= 12) return res.json({ valid: true, credits: 100, label: 'Test Pack' });
 
-    // Test keys for development
-    if (licenseKey.startsWith('TEST-') && licenseKey.length >= 12) {
-      return res.json({ valid: true, credits: 100, label: 'Test Pack' });
-    }
+  const record = licenseStore.get(licenseKey);
+  if (!record)       return res.json({ valid: false, error: 'License key not found' });
+  if (record.usedAt) return res.json({ valid: false, error: 'Already activated' });
 
-    const record = licenseStore.get(licenseKey);
-    if (!record) {
-      return res.json({ valid: false, error: 'License key not found' });
-    }
-    if (record.usedAt) {
-      return res.json({ valid: false, error: 'License key already activated' });
-    }
-
-    // Mark as used
-    record.usedAt = Date.now();
-    licenseStore.set(licenseKey, record);
-
-    res.json({ valid: true, credits: record.credits, label: record.label });
-
-  } catch (err) {
-    res.status(500).json({ valid: false, error: 'Server error' });
-  }
+  record.usedAt = Date.now();
+  licenseStore.set(licenseKey, record);
+  res.json({ valid: true, credits: record.credits, label: record.label });
 });
 
-// ──────────────────────────────────────────────────────────────
-//  GET /api/health
-// ──────────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, licenses: licenseStore.size });
-});
-
-// ── Helpers ───────────────────────────────────────────────────
 function generateLicenseKey() {
-  const seg = () => crypto.randomBytes(3).toString('hex').toUpperCase();
-  return `MLS-${seg()}-${seg()}-${seg()}`; // e.g. MLS-A1B2C3-D4E5F6-789ABC
+  const s = () => crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `MLS-${s()}-${s()}-${s()}`;
 }
 
 app.listen(PORT, () => {
-  console.log(`✅  Maps Lead Scraper API on port ${PORT}`);
-  console.log(`    Paddle mode: ${process.env.PADDLE_ENV || 'sandbox'}`);
+  console.log(`\n✅  API on port ${PORT} | Paddle: ${PADDLE_ENV} | Key set: ${!!process.env.PADDLE_API_KEY}\n`);
 });
 
 export default app;
