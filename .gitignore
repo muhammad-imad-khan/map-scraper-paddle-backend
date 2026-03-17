@@ -1,4 +1,4 @@
 .vercel
 .env*.local
 *node_modules
-.env.example
+.env.example.env.production

@@ -11,9 +11,9 @@ dotenv.config({ path: '.env.local' });
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-const PAYMENT_CHECKOUT_URL = process.env.PAYMENT_CHECKOUT_URL || process.env.SUCCESS_URL || '';
+const PAYMENT_CHECKOUT_URL = (process.env.PAYMENT_CHECKOUT_URL || process.env.SUCCESS_URL || '').trim();
 
-const PADDLE_ENV     = process.env.PADDLE_ENV || 'sandbox';
+const PADDLE_ENV     = (process.env.PADDLE_ENV || 'sandbox').trim();
 const PADDLE_API_URL = PADDLE_ENV === 'production'
   ? 'https://api.paddle.com'
   : 'https://sandbox-api.paddle.com';
@@ -24,9 +24,9 @@ const licenseStore = new Map();
 
 // PUT YOUR REAL PADDLE PRICE IDs HERE (from Paddle Dashboard → Catalog → Products → Prices)
 const PACKS = {
-  [process.env.PRICE_ID_100  || 'pri_placeholder_100']:  { credits: 100,  price: '$5',  label: 'Starter Pack' },
-  [process.env.PRICE_ID_500  || 'pri_placeholder_500']:  { credits: 500,  price: '$19', label: 'Pro Pack'     },
-  [process.env.PRICE_ID_1000 || 'pri_placeholder_1000']: { credits: 1000, price: '$35', label: 'Agency Pack'  },
+  [(process.env.PRICE_ID_100  || 'pri_placeholder_100').trim()]:  { credits: 100,  price: '$5',  label: 'Starter Pack' },
+  [(process.env.PRICE_ID_500  || 'pri_placeholder_500').trim()]:  { credits: 500,  price: '$19', label: 'Pro Pack'     },
+  [(process.env.PRICE_ID_1000 || 'pri_placeholder_1000').trim()]: { credits: 1000, price: '$35', label: 'Agency Pack'  },
 };
 
 app.use(cors({
