@@ -11,6 +11,7 @@ dotenv.config({ path: '.env.local' });
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+const PAYMENT_CHECKOUT_URL = process.env.PAYMENT_CHECKOUT_URL || process.env.SUCCESS_URL || '';
 
 const PADDLE_ENV     = process.env.PADDLE_ENV || 'sandbox';
 const PADDLE_API_URL = PADDLE_ENV === 'production'
@@ -60,15 +61,23 @@ async function paddleRequest(path, options = {}) {
 
 app.get('/', (_req, res) => {
   res.json({ name: 'Maps Lead Scraper API', version: '2.0.0', env: PADDLE_ENV,
-    routes: ['/api/health', '/api/packs', '/api/checkout', '/api/verify-license', '/api/webhook'] });
+    routes: ['/api/health', '/api/packs', '/api/payment-config', '/api/checkout', '/api/verify-license', '/api/webhook'] });
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, licenses: licenseStore.size, env: PADDLE_ENV });
+  res.json({ ok: true, licenses: licenseStore.size, env: PADDLE_ENV, checkoutConfigured: !!PAYMENT_CHECKOUT_URL });
 });
 
 app.get('/api/packs', (_req, res) => {
   res.json({ packs: Object.entries(PACKS).map(([priceId, info]) => ({ priceId, ...info })) });
+});
+
+app.get('/api/payment-config', (_req, res) => {
+  if (!PAYMENT_CHECKOUT_URL) {
+    return res.status(404).json({ error: 'PAYMENT_CHECKOUT_URL is not configured' });
+  }
+
+  res.json({ checkoutUrl: PAYMENT_CHECKOUT_URL });
 });
 
 app.post('/api/checkout', async (req, res) => {

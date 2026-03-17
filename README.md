@@ -70,9 +70,12 @@ Set these environment variables in Vercel dashboard:
 ```
 PADDLE_API_KEY        → your Paddle API key
 PADDLE_WEBHOOK_SECRET → set after Step 5
+PAYMENT_CHECKOUT_URL  → https://buy.paddle.com/...
 SUCCESS_URL           → https://mapsleadscraper.com/success
 SITE_ORIGIN           → https://mapsleadscraper.com
 ```
+
+`PAYMENT_CHECKOUT_URL` is used by the website payment page via `/api/payment-config`, so the frontend can keep the checkout destination in server-side environment config instead of hardcoding it into static HTML.
 
 Your API will be at: `https://your-project.vercel.app`
 
