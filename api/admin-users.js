@@ -169,6 +169,15 @@ module.exports = async function handler(req, res) {
     if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
     const action = (body.action || '').toString();
 
+    // ── Dashboard stats ──
+    if (action === 'getStats') {
+      const totalInstalls = await redis.get(keys.stats('total_installs'));
+      return res.status(200).json({
+        ok: true,
+        totalInstalls: totalInstalls ? Number(totalInstalls) : 0,
+      });
+    }
+
     if (action === 'adjustCredits') {
       const installId = (body.installId || '').toString().trim();
       const delta = Number(body.delta);

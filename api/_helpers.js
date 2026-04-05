@@ -41,6 +41,7 @@ const keys = {
   txnLog:    (id) => `txnlog:${id}`,
   txnDedup:  (txnId) => `txn:${txnId}`,
   install:   (id) => `install:${id}`,
+  stats:     (name) => `stats:${name}`,
 };
 
 // ── Credit operations (all server-side, atomic) ───────────
@@ -84,6 +85,7 @@ async function initUser(installId) {
   await redis.set(keys.install(installId), JSON.stringify({
     createdAt: new Date().toISOString(),
   }));
+  await redis.incr(keys.stats('total_installs'));
   return { credits: FREE_STARTER_CREDITS, expired: false, expiresAt: null, isNew: true };
 }
 
