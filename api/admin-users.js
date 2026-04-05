@@ -165,9 +165,26 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(payload);
     }
 
-    let body = req.body || {};
-    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+    let body = req.body;
+    const rawBodyType = typeof req.body;
+    const isBuffer = Buffer.isBuffer(req.body);
+    if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
+    else if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+    else if (!body || typeof body !== 'object') { body = {}; }
     const action = (body.action || '').toString();
+
+    // ── Debug endpoint (temporary) ──
+    if (action === 'debug' || (req.query && req.query.debug === '1')) {
+      return res.status(200).json({
+        ok: true,
+        rawBodyType,
+        isBuffer,
+        bodyKeys: Object.keys(body),
+        action,
+        contentType: req.headers['content-type'] || null,
+        method: req.method,
+      });
+    }
 
     // ── Dashboard stats ──
     if (action === 'getStats') {
