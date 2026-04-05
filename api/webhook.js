@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification } = require('./_helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail } = require('./_helpers');
 
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
@@ -149,6 +149,14 @@ module.exports = async function handler(req, res) {
           currency: txnData?.currency_code,
           txnId,
         }).catch(() => {}); // fire-and-forget, don't block webhook response
+
+        if (grantsUnlimited) {
+          sendZipDeliveryEmail({
+            email: userEmail,
+            name: userData.name,
+            txnId,
+          }).catch(() => {}); // fire-and-forget, don't block webhook response
+        }
       }
     }
 

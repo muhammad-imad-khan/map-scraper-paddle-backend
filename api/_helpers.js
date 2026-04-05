@@ -2,6 +2,8 @@
 const Redis = require('ioredis');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 
 const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim();
 
@@ -197,6 +199,58 @@ async function sendPurchaseNotification({ userName, userEmail, packLabel, credit
   }
 }
 
+async function sendZipDeliveryEmail({ email, name, txnId }) {
+  const transport = getMailTransport();
+  if (!transport || !email) {
+    console.warn('SMTP or recipient missing, skipping zip delivery email');
+    return;
+  }
+
+  const zipPath = path.join(__dirname, '_assets', 'maps-scraper-extension-v1.0.zip');
+  const hasZip = fs.existsSync(zipPath);
+  const fallbackUrl = 'https://map-scrapper-five.vercel.app/#install';
+
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <div style="background:#16a34a;padding:20px 24px;color:#fff;">
+        <h2 style="margin:0;font-size:20px;">Your Purchase Is Confirmed</h2>
+      </div>
+      <div style="padding:24px;">
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Hi${name ? ' ' + name : ''},</p>
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Thanks for purchasing Maps Lead Scraper lifetime access.</p>
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">${hasZip ? 'Your extension ZIP is attached to this email.' : 'Your extension ZIP could not be attached automatically. Use the download button below.'}</p>
+        <div style="text-align:center;margin:20px 0;">
+          <a href="${fallbackUrl}" style="display:inline-block;background:#16a34a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">Open Download Page</a>
+        </div>
+        <p style="font-size:12px;color:#64748b;margin:0;">Transaction ID: ${txnId || 'N/A'}</p>
+      </div>
+      <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
+        Map Lead Scraper &mdash; Purchase Delivery Email
+      </div>
+    </div>
+  `;
+
+  try {
+    const mail = {
+      from: `"Map Lead Scraper" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Your Maps Lead Scraper extension ZIP',
+      html,
+    };
+    if (hasZip) {
+      mail.attachments = [{
+        filename: 'maps-scraper-extension-v1.0.zip',
+        path: zipPath,
+        contentType: 'application/zip',
+      }];
+    }
+    await transport.sendMail(mail);
+    console.log(`Zip delivery email sent to ${email} (txn: ${txnId})`);
+  } catch (err) {
+    console.error('Failed to send zip delivery email:', err.message);
+  }
+}
+
 async function sendInstallNotification({ installId }) {
   const transport = getMailTransport();
   if (!transport) {
@@ -279,6 +333,6 @@ module.exports = {
   LOW_CREDITS_THRESHOLD,
   cors, paddleRequest, getRedis, keys,
   getCredits, initUser, addCredits, deductCredits, isValidInstallId,
-  sendPurchaseNotification, sendInstallNotification, sendLowCreditsEmail, ADMIN_EMAIL,
+  sendPurchaseNotification, sendZipDeliveryEmail, sendInstallNotification, sendLowCreditsEmail, ADMIN_EMAIL,
 };
 
