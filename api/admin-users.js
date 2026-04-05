@@ -337,6 +337,80 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // ── List bank transfer requests ──
+    if (action === 'listBankTransfers') {
+      const statusFilter = (body.status || 'pending').toString();
+      const listKey = statusFilter === 'all' ? null : `banktransfers:${statusFilter}`;
+
+      let ids = [];
+      if (listKey) {
+        ids = await redis.lrange(listKey, 0, -1);
+      } else {
+        const pending = await redis.lrange('banktransfers:pending', 0, -1);
+        const approved = await redis.lrange('banktransfers:approved', 0, -1);
+        const rejected = await redis.lrange('banktransfers:rejected', 0, -1);
+        ids = [...pending, ...approved, ...rejected];
+      }
+
+      const items = [];
+      for (const id of ids) {
+        const raw = await redis.get(`banktransfer:${id}`);
+        if (raw) items.push(JSON.parse(raw));
+      }
+
+      return res.status(200).json({ ok: true, count: items.length, items });
+    }
+
+    // ── Approve bank transfer (add credits to install) ──
+    if (action === 'approveBankTransfer') {
+      const btId = (body.btId || '').toString().trim();
+      const credits = Number(body.credits);
+      const installId = (body.installId || '').toString().trim();
+
+      if (!btId) return res.status(400).json({ error: 'btId is required.' });
+
+      const raw = await redis.get(`banktransfer:${btId}`);
+      if (!raw) return res.status(404).json({ error: 'Bank transfer not found.' });
+
+      const bt = JSON.parse(raw);
+      bt.status = 'approved';
+      bt.approvedAt = new Date().toISOString();
+      bt.approvedBy = 'admin';
+      bt.creditsGranted = credits || 0;
+
+      // Add credits if installId and credits provided
+      if (installId && isValidInstallId(installId) && credits > 0) {
+        const { addCredits } = require('./_helpers');
+        await addCredits(installId, credits, `banktransfer:${btId}`);
+        bt.installId = installId;
+      }
+
+      await redis.set(`banktransfer:${btId}`, JSON.stringify(bt));
+      // Move from pending to approved list
+      await redis.lrem('banktransfers:pending', 0, btId);
+      await redis.lpush('banktransfers:approved', btId);
+
+      return res.status(200).json({ ok: true, bt });
+    }
+
+    // ── Reject bank transfer ──
+    if (action === 'rejectBankTransfer') {
+      const btId = (body.btId || '').toString().trim();
+      if (!btId) return res.status(400).json({ error: 'btId is required.' });
+
+      const raw = await redis.get(`banktransfer:${btId}`);
+      if (!raw) return res.status(404).json({ error: 'Bank transfer not found.' });
+
+      const bt = JSON.parse(raw);
+      bt.status = 'rejected';
+      bt.rejectedAt = new Date().toISOString();
+      await redis.set(`banktransfer:${btId}`, JSON.stringify(bt));
+      await redis.lrem('banktransfers:pending', 0, btId);
+      await redis.lpush('banktransfers:rejected', btId);
+
+      return res.status(200).json({ ok: true, bt });
+    }
+
     return res.status(400).json({ error: 'Invalid action.' });
   } catch (err) {
     console.error('admin-users error:', err);
