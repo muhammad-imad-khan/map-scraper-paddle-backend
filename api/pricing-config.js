@@ -64,7 +64,7 @@ async function getPricingMode() {
 }
 
 function buildPublicPricing(mode) {
-  const oneTimePrice = process.env.PRICE_ONE_TIME_LABEL || '$25';
+  const oneTimePrice = process.env.PRICE_ONE_TIME_LABEL || '$5.99';
   const oneTimePriceId = process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9';
   return {
     mode,
