@@ -61,7 +61,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (data?.data?.checkout?.url) {
-      return res.status(200).json({ checkoutUrl: data.data.checkout.url });
+      return res.status(200).json({ checkoutUrl: data.data.checkout.url, txnId: data?.data?.id || null });
     }
 
     if (data?.data?.id) {
@@ -69,7 +69,7 @@ module.exports = async function handler(req, res) {
       const checkoutDomain = (process.env.PADDLE_ENV === 'live' || process.env.PADDLE_ENV === 'production')
         ? 'https://checkout.paddle.com'
         : 'https://sandbox-checkout.paddle.com';
-      return res.status(200).json({ checkoutUrl: `${checkoutDomain}/transaction/${txnId}` });
+      return res.status(200).json({ checkoutUrl: `${checkoutDomain}/transaction/${txnId}`, txnId });
     }
 
     console.error('Paddle /transactions response:', JSON.stringify(data));
