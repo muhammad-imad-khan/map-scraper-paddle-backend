@@ -3,13 +3,13 @@ const Redis = require('ioredis');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
-const PADDLE_ENV = process.env.PADDLE_ENV || 'sandbox';
+const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim();
 
 const BASE_URL = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
   ? 'https://api.paddle.com'
   : 'https://sandbox-api.paddle.com';
 
-const PADDLE_API_KEY = process.env.PADDLE_API_KEY || '';
+const PADDLE_API_KEY = (process.env.PADDLE_API_KEY || '').trim();
 
 const FREE_STARTER_CREDITS = 3;
 const CREDITS_EXPIRY_DAYS = 7;
