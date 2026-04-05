@@ -183,8 +183,23 @@ module.exports = async function handler(req, res) {
 
       // ── Stats ──
       if (type === 'stats') {
-        const totalInstalls = await redis.get(keys.stats('total_installs'));
-        return res.status(200).json({ ok: true, totalInstalls: totalInstalls ? Number(totalInstalls) : 0 });
+        let totalInstalls = await redis.get(keys.stats('total_installs'));
+        totalInstalls = totalInstalls ? Number(totalInstalls) : 0;
+        // Fallback: count install:* keys if counter wasn't set for pre-existing installs
+        if (totalInstalls === 0) {
+          let scanCur = '0';
+          let count = 0;
+          do {
+            const [next, found] = await redis.scan(scanCur, 'MATCH', 'install:*', 'COUNT', 200);
+            scanCur = next;
+            count += found.length;
+          } while (scanCur !== '0');
+          if (count > 0) {
+            await redis.set(keys.stats('total_installs'), count);
+            totalInstalls = count;
+          }
+        }
+        return res.status(200).json({ ok: true, totalInstalls });
       }
 
       // ── Monthly report ──

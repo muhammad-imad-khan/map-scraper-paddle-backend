@@ -120,7 +120,7 @@ async function deductCredits(installId, amount) {
 
 // ── Validate installId format ─────────────────────────────
 function isValidInstallId(id) {
-  return typeof id === 'string' && /^[a-f0-9-]{36}$/i.test(id);
+  return typeof id === 'string' && id.length >= 8 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
 function cors(res) {

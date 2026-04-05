@@ -22,12 +22,22 @@ module.exports = async function handler(req, res) {
       if (result.isNew) {
         sendInstallNotification({ installId }).catch(() => {});
       }
-      return res.status(200).json({
+
+      const response = {
         credits: result.credits,
         installId,
         expired: result.expired,
         expiresAt: result.expiresAt,
-      });
+      };
+
+      // If ?history=1, include transaction log (purchases + deductions)
+      if (req.query.history === '1') {
+        const redis = getRedis();
+        const txns = await redis.lrange(keys.txnLog(installId), 0, -1);
+        response.history = txns.map(t => { try { return JSON.parse(t); } catch { return null; } }).filter(Boolean);
+      }
+
+      return res.status(200).json(response);
     } catch (err) {
       console.error('Credits GET error:', err);
       return res.status(500).json({ error: 'Internal server error' });
