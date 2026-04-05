@@ -66,7 +66,7 @@ module.exports = async function handler(req, res) {
               <tr><td style="padding:8px 0;color:#64748b;">Date</td><td style="padding:8px 0;">${record.createdAt}</td></tr>
             </table>
             <div style="margin-top:20px;text-align:center;">
-              <a href="https://map-scrapper-five.vercel.app/admin.html" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">Approve in Admin Panel</a>
+              <a href="https://map-scrapper-five.vercel.app/admin/" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">Approve in Admin Panel</a>
             </div>
           </div>
           <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
