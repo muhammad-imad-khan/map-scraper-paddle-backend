@@ -1,9 +1,9 @@
-// GET  /api/admin-users  — paginate users / installs
+// GET  /api/admin-users  — paginate users / installs / stats / monthlyReport / bankTransfers
 // POST /api/admin-users  — admin actions (adjustCredits, setCredits, setExpiry,
-//   deleteUser, testEmail, monthlyReport, listBankTransfers, approveBankTransfer, rejectBankTransfer)
+//   deleteUser, testEmail, approveBankTransfer, rejectBankTransfer)
 // Auth: X-Admin-Key header or Authorization: Bearer <key>
 // Query:
-//   type=users|installs (default: users)
+//   type=users|installs|stats|monthlyReport|bankTransfers (default: users)
 //   cursor=<redis-scan-cursor> (default: 0)
 //   limit=<1..200> (default: 50)
 // Auth:
@@ -13,6 +13,33 @@ const { cors, getRedis, keys, isValidInstallId, sendPurchaseNotification } = req
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
+
+// Manual body reader — bypasses Vercel's sometimes-unreliable auto-parsing
+function readBody(req) {
+  return new Promise((resolve) => {
+    // If Vercel already parsed it into a usable object, use it
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+      return resolve(req.body);
+    }
+    // If it's a Buffer, parse it
+    if (Buffer.isBuffer(req.body)) {
+      try { return resolve(JSON.parse(req.body.toString('utf8'))); } catch { return resolve({}); }
+    }
+    // If it's a string, parse it
+    if (typeof req.body === 'string' && req.body.length > 0) {
+      try { return resolve(JSON.parse(req.body)); } catch { return resolve({}); }
+    }
+    // Last resort: read from stream
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      if (chunks.length === 0) return resolve({});
+      const raw = Buffer.concat(chunks).toString('utf8');
+      try { resolve(JSON.parse(raw)); } catch { resolve({}); }
+    });
+    req.on('error', () => resolve({}));
+  });
+}
 
 function getAdminKey(req) {
   const fromHeader = (req.headers['x-admin-key'] || '').toString().trim();
@@ -154,8 +181,75 @@ module.exports = async function handler(req, res) {
       const cursor = (query.cursor || '0').toString();
       const limit = parseLimit(query.limit);
 
+      // ── Stats ──
+      if (type === 'stats') {
+        const totalInstalls = await redis.get(keys.stats('total_installs'));
+        return res.status(200).json({ ok: true, totalInstalls: totalInstalls ? Number(totalInstalls) : 0 });
+      }
+
+      // ── Monthly report ──
+      if (type === 'monthlyreport') {
+        const targetMonth = (query.month || '').toString().trim();
+        let scanCursor = '0';
+        const allPurchases = [];
+        do {
+          const [nextCursor, foundKeys] = await redis.scan(scanCursor, 'MATCH', 'user:*', 'COUNT', 200);
+          scanCursor = nextCursor;
+          if (foundKeys.length === 0) continue;
+          const pipe = redis.pipeline();
+          foundKeys.forEach(k => pipe.get(k));
+          const results = await pipe.exec();
+          for (let i = 0; i < foundKeys.length; i++) {
+            const err = results[i] && results[i][0];
+            const raw = results[i] && results[i][1];
+            if (err || !raw) continue;
+            const user = safeParse(raw);
+            if (!user || !user.email || !Array.isArray(user.purchases)) continue;
+            for (const p of user.purchases) {
+              if (p.status !== 'completed') continue;
+              const date = p.completedAt || p.createdAt;
+              if (!date) continue;
+              const month = date.slice(0, 7);
+              if (targetMonth && month !== targetMonth) continue;
+              allPurchases.push({ email: user.email, name: user.name || null, pack: p.label || p.priceId || 'Unknown', credits: p.credits || 0, amount: p.amount || null, currency: p.currency || null, txnId: p.txnId || null, date, month });
+            }
+          }
+        } while (scanCursor !== '0');
+        const months = {};
+        for (const p of allPurchases) {
+          if (!months[p.month]) months[p.month] = { month: p.month, totalSales: 0, totalRevenue: 0, purchases: [] };
+          months[p.month].totalSales++;
+          if (p.amount) months[p.month].totalRevenue += Number(p.amount) || 0;
+          months[p.month].purchases.push(p);
+        }
+        const sortedMonths = Object.values(months).sort((a, b) => b.month.localeCompare(a.month));
+        for (const m of sortedMonths) m.totalRevenue = (m.totalRevenue / 100).toFixed(2);
+        return res.status(200).json({ ok: true, totalPurchases: allPurchases.length, months: sortedMonths });
+      }
+
+      // ── Bank transfers ──
+      if (type === 'banktransfers') {
+        const statusFilter = (query.status || 'pending').toString();
+        const listKey = statusFilter === 'all' ? null : `banktransfers:${statusFilter}`;
+        let ids = [];
+        if (listKey) {
+          ids = await redis.lrange(listKey, 0, -1);
+        } else {
+          const pending = await redis.lrange('banktransfers:pending', 0, -1);
+          const approved = await redis.lrange('banktransfers:approved', 0, -1);
+          const rejected = await redis.lrange('banktransfers:rejected', 0, -1);
+          ids = [...pending, ...approved, ...rejected];
+        }
+        const items = [];
+        for (const id of ids) {
+          const raw = await redis.get(`banktransfer:${id}`);
+          if (raw) items.push(JSON.parse(raw));
+        }
+        return res.status(200).json({ ok: true, count: items.length, items });
+      }
+
       if (type !== 'users' && type !== 'installs') {
-        return res.status(400).json({ error: 'Invalid type. Use users or installs.' });
+        return res.status(400).json({ error: 'Invalid type. Use users, installs, stats, monthlyReport, or bankTransfers.' });
       }
 
       const payload = type === 'users'
@@ -165,20 +259,15 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(payload);
     }
 
-    let body = req.body;
-    const rawBodyType = typeof req.body;
-    const isBuffer = Buffer.isBuffer(req.body);
-    if (Buffer.isBuffer(body)) { try { body = JSON.parse(body.toString('utf8')); } catch { body = {}; } }
-    else if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
-    else if (!body || typeof body !== 'object') { body = {}; }
+    const body = await readBody(req);
     const action = (body.action || '').toString();
 
     // ── Debug endpoint (temporary) ──
     if (action === 'debug' || (req.query && req.query.debug === '1')) {
       return res.status(200).json({
         ok: true,
-        rawBodyType,
-        isBuffer,
+        rawBodyType: typeof req.body,
+        isBuffer: Buffer.isBuffer(req.body),
         bodyKeys: Object.keys(body),
         action,
         contentType: req.headers['content-type'] || null,
