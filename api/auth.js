@@ -32,6 +32,13 @@ function sanitize(str, maxLen = 100) {
   return String(str || '').trim().slice(0, maxLen);
 }
 
+function getLifetimePriceIds() {
+  return new Set([
+    process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9',
+    process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz',
+  ]);
+}
+
 module.exports = async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -105,7 +112,30 @@ module.exports = async function handler(req, res) {
       if (!raw) return res.status(401).json({ error: 'Session expired. Please log in again.' });
 
       const session = JSON.parse(raw);
-      return res.status(200).json({ ok: true, user: session });
+      const userRaw = await redis.get(authKeys.user(session.email));
+      const userData = userRaw ? JSON.parse(userRaw) : null;
+      const purchases = Array.isArray(userData?.purchases) ? userData.purchases : [];
+      const lifetimePriceIds = getLifetimePriceIds();
+      const hasLifetimeAccess = purchases.some(p =>
+        p && p.status === 'completed' && (
+          lifetimePriceIds.has(p.priceId) ||
+          String(p.label || '').toLowerCase().includes('lifetime') ||
+          p.unlimited === true
+        )
+      );
+      return res.status(200).json({
+        ok: true,
+        user: {
+          name: session.name,
+          email: session.email,
+          createdAt: userData?.createdAt || null,
+        },
+        purchases,
+        entitlements: {
+          lifetimeAccess: hasLifetimeAccess,
+          zipDownload: hasLifetimeAccess,
+        },
+      });
     }
 
     // ── LOGOUT ──

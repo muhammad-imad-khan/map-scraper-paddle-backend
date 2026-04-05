@@ -74,23 +74,31 @@ module.exports = async function handler(req, res) {
     // ── Calculate credits to add ──
     let totalCredits = 0;
     let label = 'Credit Pack';
+    let matchedPurchase = false;
+    let matchedPriceId = null;
+    let grantsUnlimited = false;
 
     for (const item of items) {
       const priceId = item?.price?.id;
       const match = PRICE_CREDITS[priceId];
       if (match) {
-        totalCredits += match.credits * (item.quantity || 1);
+        matchedPurchase = true;
+        matchedPriceId = priceId;
+        totalCredits += (match.credits || 0) * (item.quantity || 1);
         label = match.label;
+        grantsUnlimited = grantsUnlimited || match.unlimited === true;
       }
     }
 
-    if (totalCredits === 0) {
+    if (!matchedPurchase) {
       console.warn('No matching price IDs in txn:', txnId);
       return res.status(200).json({ received: true, warning: 'No matching prices' });
     }
 
     // ── Credit the user's account (atomic + set 7-day expiry) ──
-    const result = await addCredits(installId, totalCredits, `purchase:${txnId}:${label}`);
+    const result = totalCredits > 0
+      ? await addCredits(installId, totalCredits, `purchase:${txnId}:${label}`)
+      : null;
 
     // ── Update user purchase status + send email notification ──
     const userEmail = txnData?.custom_data?.email;
@@ -108,11 +116,14 @@ module.exports = async function handler(req, res) {
             pending.credits = totalCredits;
             pending.amount = txnData?.details?.totals?.total || null;
             pending.currency = txnData?.currency_code || null;
+            pending.label = label;
+            pending.priceId = matchedPriceId || pending.priceId || null;
+            pending.unlimited = grantsUnlimited;
           } else {
             // No pending record (e.g. webhook arrived before checkout recorded it)
             userData.purchases = userData.purchases || [];
             userData.purchases.push({
-              priceId: items[0]?.price?.id || null,
+              priceId: matchedPriceId || items[0]?.price?.id || null,
               installId,
               status: 'completed',
               createdAt: new Date().toISOString(),
@@ -120,6 +131,7 @@ module.exports = async function handler(req, res) {
               txnId,
               credits: totalCredits,
               label,
+              unlimited: grantsUnlimited,
               amount: txnData?.details?.totals?.total || null,
               currency: txnData?.currency_code || null,
             });
@@ -144,16 +156,22 @@ module.exports = async function handler(req, res) {
     await redis.set(keys.txnDedup(txnId), JSON.stringify({
       installId,
       credits: totalCredits,
+      unlimited: grantsUnlimited,
       processedAt: new Date().toISOString(),
     }), 'EX', 60 * 60 * 24 * 30);
 
-    console.log(`Auto-credited ${totalCredits} credits to ${installId} (txn: ${txnId}). Balance: ${result.newBalance}, expires: ${new Date(result.expiresAt).toISOString()}`);
+    if (result) {
+      console.log(`Auto-credited ${totalCredits} credits to ${installId} (txn: ${txnId}). Balance: ${result.newBalance}, expires: ${new Date(result.expiresAt).toISOString()}`);
+    } else {
+      console.log(`Marked lifetime purchase complete for ${installId} (txn: ${txnId}).`);
+    }
 
     return res.status(200).json({
       received: true,
       credited: totalCredits,
-      newBalance: result.newBalance,
-      expiresAt: result.expiresAt,
+      newBalance: result ? result.newBalance : null,
+      expiresAt: result ? result.expiresAt : null,
+      unlimited: grantsUnlimited,
       installId,
     });
   } catch (err) {
