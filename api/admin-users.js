@@ -165,7 +165,8 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(payload);
     }
 
-    const body = req.body || {};
+    let body = req.body || {};
+    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
     const action = (body.action || '').toString();
 
     if (action === 'adjustCredits') {
