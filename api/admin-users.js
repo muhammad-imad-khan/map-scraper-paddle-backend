@@ -1,5 +1,7 @@
-// GET /api/admin-users
-// Secure admin endpoint to paginate through auth users and install subscriptions.
+// GET  /api/admin-users  — paginate users / installs
+// POST /api/admin-users  — admin actions (adjustCredits, setCredits, setExpiry,
+//   deleteUser, testEmail, monthlyReport, listBankTransfers, approveBankTransfer, rejectBankTransfer)
+// Auth: X-Admin-Key header or Authorization: Bearer <key>
 // Query:
 //   type=users|installs (default: users)
 //   cursor=<redis-scan-cursor> (default: 0)
