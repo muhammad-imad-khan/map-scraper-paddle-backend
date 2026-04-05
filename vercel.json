@@ -1,5 +1,8 @@
 {
   "version": 2,
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": "",
   "functions": {
     "api/*.js": {
       "memory": 256,
