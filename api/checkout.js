@@ -66,7 +66,7 @@ module.exports = async function handler(req, res) {
 
     if (data?.data?.id) {
       const txnId = data.data.id;
-      const checkoutDomain = process.env.PADDLE_ENV === 'live'
+      const checkoutDomain = (process.env.PADDLE_ENV === 'live' || process.env.PADDLE_ENV === 'production')
         ? 'https://checkout.paddle.com'
         : 'https://sandbox-checkout.paddle.com';
       return res.status(200).json({ checkoutUrl: `${checkoutDomain}/transaction/${txnId}` });

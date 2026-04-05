@@ -5,7 +5,7 @@ const nodemailer = require('nodemailer');
 
 const PADDLE_ENV = process.env.PADDLE_ENV || 'sandbox';
 
-const BASE_URL = PADDLE_ENV === 'live'
+const BASE_URL = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
   ? 'https://api.paddle.com'
   : 'https://sandbox-api.paddle.com';
 
