@@ -66,12 +66,15 @@ async function getPricingMode() {
 function buildPublicPricing(mode) {
   const oneTimePrice = process.env.PRICE_ONE_TIME_LABEL || '$5.99';
   const oneTimePriceId = process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9';
+  const oneTimeIntlPrice = process.env.PRICE_ONE_TIME_INTL_LABEL || '$20';
+  const oneTimeIntlPriceId = process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz';
   return {
     mode,
     plans: {
       pro: { price: '$5', credits: 500, label: 'Pro Pack' },
       enterprise: { price: '$25', credits: 2500, label: 'Enterprise Pack' },
       oneTime: { price: oneTimePrice, label: 'Lifetime License', priceId: oneTimePriceId },
+      oneTimeIntl: { price: oneTimeIntlPrice, label: 'Lifetime License', priceId: oneTimeIntlPriceId },
     },
   };
 }
