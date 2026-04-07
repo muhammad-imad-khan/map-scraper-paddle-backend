@@ -5,6 +5,13 @@ const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 
+let google;
+try {
+  ({ google } = require('googleapis'));
+} catch {
+  google = null;
+}
+
 const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim();
 
 const BASE_URL = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
@@ -22,6 +29,7 @@ const PRICE_CREDITS = {
   [process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d']:       { credits: 2500, label: 'Enterprise Pack' },
   [process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9']:      { credits: 0, label: 'Lifetime License', unlimited: true },
   [process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz']: { credits: 0, label: 'Lifetime License', unlimited: true },
+  [process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty']:        { credits: 0, label: 'Lead Gen x AI Web Design Course', course: true },
 };
 
 // ── Redis singleton ───────────────────────────────────────
@@ -328,11 +336,141 @@ async function sendLowCreditsEmail({ email, name, credits, installId }) {
   }
 }
 
+// ── Course delivery + Google Drive sharing ───────────────
+const COURSE_DRIVE_LINK = process.env.COURSE_LINK || 'https://drive.google.com/drive/folders/1-FQQCwzAvlnHVKn2BYPhKBRB9lWVsaUi?usp=drive_link';
+const COURSE_NAME = 'Lead Generation x AI Powered Web Design Course';
+
+function normalizePrivateKey(key) {
+  return String(key || '').replace(/\\n/g, '\n').trim();
+}
+
+function getServiceAccountConfig() {
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+      return {
+        clientEmail: parsed.client_email,
+        privateKey: normalizePrivateKey(parsed.private_key),
+      };
+    } catch (err) {
+      console.error('Invalid GOOGLE_SERVICE_ACCOUNT_JSON:', err.message);
+    }
+  }
+  return {
+    clientEmail: (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim(),
+    privateKey: normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || ''),
+  };
+}
+
+function extractDriveFolderId(link) {
+  if (!link) return '';
+  const fromFoldersPath = String(link).match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (fromFoldersPath && fromFoldersPath[1]) return fromFoldersPath[1];
+  const fromQuery = String(link).match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (fromQuery && fromQuery[1]) return fromQuery[1];
+  return '';
+}
+
+function getDriveClient() {
+  if (!google) return null;
+  const { clientEmail, privateKey } = getServiceAccountConfig();
+  if (!clientEmail || !privateKey) return null;
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  return google.drive({ version: 'v3', auth });
+}
+
+async function shareCourseFolderAccess({ email }) {
+  const folderId = extractDriveFolderId(COURSE_DRIVE_LINK);
+  if (!email || !folderId) {
+    return { ok: false, reason: 'missing_email_or_folder' };
+  }
+
+  const drive = getDriveClient();
+  if (!drive) {
+    return { ok: false, reason: 'google_credentials_missing' };
+  }
+
+  try {
+    await drive.permissions.create({
+      fileId: folderId,
+      sendNotificationEmail: true,
+      requestBody: {
+        type: 'user',
+        role: 'writer',
+        emailAddress: email,
+      },
+      fields: 'id',
+    });
+    return { ok: true };
+  } catch (err) {
+    const message = err?.errors?.[0]?.message || err?.message || 'Google Drive share failed';
+    console.error(`Drive share failed for ${email}:`, message);
+    return { ok: false, reason: 'api_error', message };
+  }
+}
+
+async function sendCourseDeliveryEmail({ email, name, txnId, shareResult }) {
+  const transport = getMailTransport();
+  if (!transport || !email) {
+    console.warn('SMTP or recipient missing, skipping course delivery email');
+    return;
+  }
+  if (!COURSE_DRIVE_LINK) {
+    console.error('COURSE_LINK env variable not set, cannot deliver course');
+    return;
+  }
+
+  const accessLine = shareResult?.ok
+    ? 'Your Google Drive access has already been granted to this email as an editor.'
+    : 'Your payment is confirmed. If the Drive invite does not appear in a few minutes, reply to this email and we will grant access manually.';
+
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <div style="background:linear-gradient(135deg,#a855f7,#6366f1);padding:24px;color:#fff;">
+        <h2 style="margin:0;font-size:22px;">Payment Confirmed</h2>
+        <p style="margin:8px 0 0;font-size:13px;opacity:.9;">${COURSE_NAME}</p>
+      </div>
+      <div style="padding:24px;">
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Hi${name ? ' ' + name : ''},</p>
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Thank you for your purchase. ${accessLine}</p>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${COURSE_DRIVE_LINK}" style="display:inline-block;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;">Open Course Folder</a>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
+          <tr><td style="padding:6px 0;color:#64748b;width:120px;">Course</td><td style="padding:6px 0;font-weight:600;color:#334155;">${COURSE_NAME}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Transaction ID</td><td style="padding:6px 0;font-size:12px;color:#334155;">${txnId || 'N/A'}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Access</td><td style="padding:6px 0;color:#334155;">Google Drive Folder (Editor)</td></tr>
+        </table>
+      </div>
+      <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
+        Map Lead Scraper - Course Delivery
+      </div>
+    </div>
+  `;
+
+  try {
+    await transport.sendMail({
+      from: `"Imad Khan Courses" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Your Course Access Is Ready',
+      html,
+    });
+    console.log(`Course delivery email sent to ${email} (txn: ${txnId})`);
+  } catch (err) {
+    console.error('Failed to send course delivery email:', err.message);
+  }
+}
+
 module.exports = {
   PADDLE_ENV, BASE_URL, PADDLE_API_KEY, PRICE_CREDITS, FREE_STARTER_CREDITS, CREDITS_EXPIRY_DAYS,
   LOW_CREDITS_THRESHOLD,
   cors, paddleRequest, getRedis, keys,
   getCredits, initUser, addCredits, deductCredits, isValidInstallId,
-  sendPurchaseNotification, sendZipDeliveryEmail, sendInstallNotification, sendLowCreditsEmail, ADMIN_EMAIL,
+  sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess,
+  sendInstallNotification, sendLowCreditsEmail, ADMIN_EMAIL,
 };
 

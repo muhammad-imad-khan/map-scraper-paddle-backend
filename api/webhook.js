@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail } = require('./_helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess } = require('./_helpers');
 
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
@@ -65,18 +65,13 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ received: true, duplicate: true });
     }
 
-    // ── Validate installId from custom_data ──
-    if (!isValidInstallId(installId)) {
-      console.error(`Webhook missing installId in custom_data for txn: ${txnId}`);
-      return res.status(200).json({ received: true, warning: 'No installId in custom_data' });
-    }
-
     // ── Calculate credits to add ──
     let totalCredits = 0;
     let label = 'Credit Pack';
     let matchedPurchase = false;
     let matchedPriceId = null;
     let grantsUnlimited = false;
+    let isCoursePurchase = false;
 
     for (const item of items) {
       const priceId = item?.price?.id;
@@ -87,6 +82,7 @@ module.exports = async function handler(req, res) {
         totalCredits += (match.credits || 0) * (item.quantity || 1);
         label = match.label;
         grantsUnlimited = grantsUnlimited || match.unlimited === true;
+        isCoursePurchase = isCoursePurchase || match.course === true;
       }
     }
 
@@ -95,8 +91,14 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ received: true, warning: 'No matching prices' });
     }
 
+    // Non-course purchases require installId for entitlements/credits.
+    if (!isCoursePurchase && !isValidInstallId(installId)) {
+      console.error(`Webhook missing installId in custom_data for txn: ${txnId}`);
+      return res.status(200).json({ received: true, warning: 'No installId in custom_data' });
+    }
+
     // ── Credit the user's account (atomic + set 7-day expiry) ──
-    const result = totalCredits > 0
+    const result = (!isCoursePurchase && totalCredits > 0)
       ? await addCredits(installId, totalCredits, `purchase:${txnId}:${label}`)
       : null;
 
@@ -124,7 +126,7 @@ module.exports = async function handler(req, res) {
             userData.purchases = userData.purchases || [];
             userData.purchases.push({
               priceId: matchedPriceId || items[0]?.price?.id || null,
-              installId,
+              installId: isCoursePurchase ? null : installId,
               status: 'completed',
               createdAt: new Date().toISOString(),
               completedAt: new Date().toISOString(),
@@ -132,6 +134,7 @@ module.exports = async function handler(req, res) {
               credits: totalCredits,
               label,
               unlimited: grantsUnlimited,
+              course: isCoursePurchase,
               amount: txnData?.details?.totals?.total || null,
               currency: txnData?.currency_code || null,
             });
@@ -157,6 +160,16 @@ module.exports = async function handler(req, res) {
             txnId,
           }).catch(() => {}); // fire-and-forget, don't block webhook response
         }
+
+        if (isCoursePurchase) {
+          const shareResult = await shareCourseFolderAccess({ email: userEmail });
+          sendCourseDeliveryEmail({
+            email: userEmail,
+            name: userData.name,
+            txnId,
+            shareResult,
+          }).catch(() => {}); // fire-and-forget, don't block webhook response
+        }
       }
     }
 
@@ -165,6 +178,7 @@ module.exports = async function handler(req, res) {
       installId,
       credits: totalCredits,
       unlimited: grantsUnlimited,
+      course: isCoursePurchase,
       processedAt: new Date().toISOString(),
     }), 'EX', 60 * 60 * 24 * 30);
 
