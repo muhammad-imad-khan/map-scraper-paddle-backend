@@ -44,9 +44,14 @@ module.exports = async function handler(req, res) {
     if (name) userData.name = name;
     userData.purchases = Array.isArray(userData.purchases) ? userData.purchases : [];
 
+    const successUrl = sanitize(req.body?.successUrl, 500) || '';
+
     const data = await paddleRequest('/transactions', {
       items: [{ price_id: priceId, quantity: 1 }],
       custom_data: { email, name, coursePurchase: true },
+      checkout: {
+        url: successUrl || undefined,
+      },
     });
 
     userData.purchases.push({
