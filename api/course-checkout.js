@@ -60,21 +60,13 @@ module.exports = async function handler(req, res) {
     });
     await redis.set(userKey, JSON.stringify(userData));
 
-    if (data?.data?.checkout?.url) {
-      return res.status(200).json({
-        checkoutUrl: data.data.checkout.url,
-        txnId: data?.data?.id || null,
-        paddleEnv: PADDLE_ENV,
-      });
-    }
-
     if (data?.data?.id) {
       const txnId = data.data.id;
-      const checkoutDomain = (process.env.PADDLE_ENV === 'live' || process.env.PADDLE_ENV === 'production')
+      const checkoutDomain = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
         ? 'https://checkout.paddle.com'
         : 'https://sandbox-checkout.paddle.com';
       return res.status(200).json({
-        checkoutUrl: `${checkoutDomain}/transaction/${txnId}`,
+        checkoutUrl: `${checkoutDomain}/?_ptxn=${txnId}`,
         txnId,
         paddleEnv: PADDLE_ENV,
       });
