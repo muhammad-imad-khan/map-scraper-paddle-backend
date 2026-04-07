@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess } = require('./_helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY } = require('./_helpers');
 
 const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim().toLowerCase();
 
@@ -25,6 +25,24 @@ function verifySignature(rawBody, signature, secret) {
     return crypto.timingSafeEqual(Buffer.from(h1), Buffer.from(expected));
   } catch {
     return false;
+  }
+}
+
+async function fetchPaddleCustomerEmail(customerId) {
+  if (!customerId || !PADDLE_API_KEY) return '';
+  try {
+    const resp = await fetch(`${BASE_URL}/customers/${customerId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${PADDLE_API_KEY}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = await resp.json().catch(() => ({}));
+    return (data?.data?.email || '').toString().trim().toLowerCase();
+  } catch (err) {
+    console.error('Customer email lookup failed:', err?.message || err);
+    return '';
   }
 }
 
@@ -114,12 +132,17 @@ module.exports = async function handler(req, res) {
       : null;
 
     // ── Update user purchase status + send email notification ──
-    const resolvedEmailRaw = txnData?.custom_data?.email
+    let resolvedEmailRaw = txnData?.custom_data?.email
       || txnData?.customer?.email
       || txnData?.customer_details?.email
       || txnData?.billing_details?.email
       || '';
-    const userEmail = String(resolvedEmailRaw).trim().toLowerCase();
+    let userEmail = String(resolvedEmailRaw).trim().toLowerCase();
+
+    if (!userEmail) {
+      const customerId = txnData?.customer_id || txnData?.customer?.id;
+      userEmail = await fetchPaddleCustomerEmail(customerId);
+    }
 
     if (userEmail) {
       const userKey = `user:${userEmail}`;
