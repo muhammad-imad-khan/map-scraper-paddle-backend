@@ -103,73 +103,84 @@ module.exports = async function handler(req, res) {
       : null;
 
     // ── Update user purchase status + send email notification ──
-    const userEmail = txnData?.custom_data?.email;
+    const resolvedEmailRaw = txnData?.custom_data?.email
+      || txnData?.customer?.email
+      || txnData?.customer_details?.email
+      || txnData?.billing_details?.email
+      || '';
+    const userEmail = String(resolvedEmailRaw).trim().toLowerCase();
+
     if (userEmail) {
       const userKey = `user:${userEmail}`;
       const userRaw = await redis.get(userKey);
-      if (userRaw) {
-        const userData = JSON.parse(userRaw);
-        // Update matching pending purchase to 'completed'
-        if (Array.isArray(userData.purchases)) {
-          const pending = userData.purchases.find(p => p.txnId === txnId && p.status === 'pending');
-          if (pending) {
-            pending.status = 'completed';
-            pending.completedAt = new Date().toISOString();
-            pending.credits = totalCredits;
-            pending.amount = txnData?.details?.totals?.total || null;
-            pending.currency = txnData?.currency_code || null;
-            pending.label = label;
-            pending.priceId = matchedPriceId || pending.priceId || null;
-            pending.unlimited = grantsUnlimited;
-          } else {
-            // No pending record (e.g. webhook arrived before checkout recorded it)
-            userData.purchases = userData.purchases || [];
-            userData.purchases.push({
-              priceId: matchedPriceId || items[0]?.price?.id || null,
-              installId: isCoursePurchase ? null : installId,
-              status: 'completed',
-              createdAt: new Date().toISOString(),
-              completedAt: new Date().toISOString(),
-              txnId,
-              credits: totalCredits,
-              label,
-              unlimited: grantsUnlimited,
-              course: isCoursePurchase,
-              amount: txnData?.details?.totals?.total || null,
-              currency: txnData?.currency_code || null,
-            });
-          }
-        }
-        await redis.set(userKey, JSON.stringify(userData));
+      const userData = userRaw
+        ? JSON.parse(userRaw)
+        : {
+            name: txnData?.custom_data?.name || txnData?.customer_details?.name || '',
+            email: userEmail,
+            createdAt: new Date().toISOString(),
+            purchases: [],
+          };
 
-        // Send purchase notification email to admin
-        sendPurchaseNotification({
-          userName: userData.name,
-          userEmail,
-          packLabel: label,
+      userData.purchases = Array.isArray(userData.purchases) ? userData.purchases : [];
+      const pending = userData.purchases.find(p => p.txnId === txnId && p.status === 'pending');
+      if (pending) {
+        pending.status = 'completed';
+        pending.completedAt = new Date().toISOString();
+        pending.credits = totalCredits;
+        pending.amount = txnData?.details?.totals?.total || null;
+        pending.currency = txnData?.currency_code || null;
+        pending.label = label;
+        pending.priceId = matchedPriceId || pending.priceId || null;
+        pending.unlimited = grantsUnlimited;
+        pending.course = isCoursePurchase;
+      } else {
+        // No pending record (e.g. webhook arrived before checkout wrote one)
+        userData.purchases.push({
+          priceId: matchedPriceId || items[0]?.price?.id || null,
+          installId: isCoursePurchase ? null : installId,
+          status: 'completed',
+          createdAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          txnId,
           credits: totalCredits,
-          amount: txnData?.details?.totals?.total ? (Number(txnData.details.totals.total) / 100).toFixed(2) : null,
-          currency: txnData?.currency_code,
+          label,
+          unlimited: grantsUnlimited,
+          course: isCoursePurchase,
+          amount: txnData?.details?.totals?.total || null,
+          currency: txnData?.currency_code || null,
+        });
+      }
+
+      await redis.set(userKey, JSON.stringify(userData));
+
+      // Send purchase notification email to admin
+      sendPurchaseNotification({
+        userName: userData.name,
+        userEmail,
+        packLabel: label,
+        credits: totalCredits,
+        amount: txnData?.details?.totals?.total ? (Number(txnData.details.totals.total) / 100).toFixed(2) : null,
+        currency: txnData?.currency_code,
+        txnId,
+      }).catch(() => {}); // fire-and-forget, don't block webhook response
+
+      if (grantsUnlimited) {
+        sendZipDeliveryEmail({
+          email: userEmail,
+          name: userData.name,
           txnId,
         }).catch(() => {}); // fire-and-forget, don't block webhook response
+      }
 
-        if (grantsUnlimited) {
-          sendZipDeliveryEmail({
-            email: userEmail,
-            name: userData.name,
-            txnId,
-          }).catch(() => {}); // fire-and-forget, don't block webhook response
-        }
-
-        if (isCoursePurchase) {
-          const shareResult = await shareCourseFolderAccess({ email: userEmail });
-          sendCourseDeliveryEmail({
-            email: userEmail,
-            name: userData.name,
-            txnId,
-            shareResult,
-          }).catch(() => {}); // fire-and-forget, don't block webhook response
-        }
+      if (isCoursePurchase) {
+        const shareResult = await shareCourseFolderAccess({ email: userEmail });
+        sendCourseDeliveryEmail({
+          email: userEmail,
+          name: userData.name,
+          txnId,
+          shareResult,
+        }).catch(() => {}); // fire-and-forget, don't block webhook response
       }
     }
 
