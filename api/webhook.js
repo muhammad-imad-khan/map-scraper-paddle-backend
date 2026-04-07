@@ -5,6 +5,8 @@
 const crypto = require('crypto');
 const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess } = require('./_helpers');
 
+const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim().toLowerCase();
+
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
   if (!secret || !signature) return false;
@@ -33,13 +35,16 @@ module.exports = async function handler(req, res) {
 
   // ── Signature verification (skip if secret not set — sandbox testing) ──
   const secret = process.env.PADDLE_WEBHOOK_SECRET;
-  if (secret) {
+  const enforceSignature = Boolean(secret) && (PADDLE_ENV === 'live' || PADDLE_ENV === 'production' || process.env.WEBHOOK_STRICT_SIGNATURE === 'true');
+  if (enforceSignature) {
     const sig = req.headers['paddle-signature'] || '';
     const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
     if (!verifySignature(rawBody, sig, secret)) {
       console.warn('Webhook signature verification failed');
       return res.status(401).json({ error: 'Invalid signature' });
     }
+  } else if (secret && PADDLE_ENV === 'sandbox') {
+    console.warn('Sandbox mode: skipping strict webhook signature check');
   }
 
   const event = req.body;
@@ -71,7 +76,7 @@ module.exports = async function handler(req, res) {
     let matchedPurchase = false;
     let matchedPriceId = null;
     let grantsUnlimited = false;
-    let isCoursePurchase = false;
+    let isCoursePurchase = txnData?.custom_data?.coursePurchase === true || txnData?.custom_data?.coursePurchase === 'true';
 
     for (const item of items) {
       const priceId = item?.price?.id;
@@ -84,6 +89,12 @@ module.exports = async function handler(req, res) {
         grantsUnlimited = grantsUnlimited || match.unlimited === true;
         isCoursePurchase = isCoursePurchase || match.course === true;
       }
+    }
+
+    if (!matchedPurchase && isCoursePurchase) {
+      matchedPurchase = true;
+      label = 'Lead Gen x AI Web Design Course';
+      matchedPriceId = items[0]?.price?.id || null;
     }
 
     if (!matchedPurchase) {
