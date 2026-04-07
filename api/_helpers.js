@@ -29,7 +29,7 @@ const PRICE_CREDITS = {
   [process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d']:       { credits: 2500, label: 'Enterprise Pack' },
   [process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9']:      { credits: 0, label: 'Lifetime License', unlimited: true },
   [process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz']: { credits: 0, label: 'Lifetime License', unlimited: true },
-  [process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty']:        { credits: 0, label: 'Lead Gen x AI Web Design Course', course: true },
+  [process.env.PRICE_COURSE_ID || 'pri_01knj7g8kpj9d1b43ys31ttz53']:        { credits: 0, label: 'Lead Gen x AI Web Design Course', course: true },
 };
 
 // ── Redis singleton ───────────────────────────────────────
