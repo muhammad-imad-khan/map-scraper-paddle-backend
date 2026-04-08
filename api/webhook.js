@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('./_helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('../lib/helpers');
 
 const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim().toLowerCase();
 
@@ -250,3 +250,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal processing error' });
   }
 };
+

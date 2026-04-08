@@ -2,7 +2,7 @@
 // Creates a Paddle transaction and returns the checkout URL.
 // Body: { priceId: "pri_...", installId: "uuid", token: "auth_token" }
 // Requires auth. Links payment to user email via custom_data.
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis } = require('./_helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis } = require('../lib/helpers');
 
 module.exports = async function handler(req, res) {
   cors(res);
@@ -79,3 +79,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+

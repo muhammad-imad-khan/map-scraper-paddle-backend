@@ -4,7 +4,7 @@
 //
 // Security: installId is a UUID generated client-side on first install.
 // All credit mutations happen server-side with atomic Redis operations.
-const { cors, isValidInstallId, getCredits, initUser, deductCredits, sendInstallNotification, sendLowCreditsEmail, getRedis, keys, LOW_CREDITS_THRESHOLD } = require('./_helpers');
+const { cors, isValidInstallId, getCredits, initUser, deductCredits, sendInstallNotification, sendLowCreditsEmail, getRedis, keys, LOW_CREDITS_THRESHOLD } = require('../lib/helpers');
 
 module.exports = async function handler(req, res) {
   cors(res);
@@ -122,3 +122,4 @@ module.exports = async function handler(req, res) {
 
   return res.status(405).json({ error: 'Method not allowed' });
 };
+

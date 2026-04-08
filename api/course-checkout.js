@@ -1,7 +1,7 @@
 // POST /api/course-checkout
 // Creates a Paddle transaction for course purchase in sandbox/live based on backend env.
 // Body: { email: "buyer@example.com", name?: "Buyer", priceId?: "pri_..." }
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis } = require('./_helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis } = require('../lib/helpers');
 
 const DEFAULT_COURSE_PRICE_ID = process.env.PRICE_COURSE_ID || 'pri_01knj7g8kpj9d1b43ys31ttz53';
 
@@ -85,3 +85,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+

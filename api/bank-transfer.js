@@ -2,7 +2,7 @@
 // Creates a bank transfer request record and notifies admin.
 // Supports both credit-pack and course purchases.
 // Body: { pack, email, name, installId, reference, purchaseType, courseId, receiptDataUrl, receiptName, receiptMimeType }
-const { cors, getRedis, sendPurchaseNotification, ADMIN_EMAIL } = require('./_helpers');
+const { cors, getRedis, sendPurchaseNotification, ADMIN_EMAIL } = require('../lib/helpers');
 const nodemailer = require('nodemailer');
 
 function getMailTransport() {
@@ -117,3 +117,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+

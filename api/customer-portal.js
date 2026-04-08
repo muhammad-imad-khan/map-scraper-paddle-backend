@@ -4,7 +4,7 @@ const {
   listEnrollments,
   updateCourseProgress,
   safeParse,
-} = require('./_helpers');
+} = require('../lib/helpers');
 
 function readBody(req) {
   return new Promise((resolve) => {

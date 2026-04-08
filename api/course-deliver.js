@@ -3,7 +3,7 @@
 // Verifies the transaction via Paddle API, then sends course email directly.
 // Body: { email: "buyer@example.com", txnId?: "txn_..." }
 // This bypasses webhook entirely — reliable in sandbox and production.
-const { cors, getRedis, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('./_helpers');
+const { cors, getRedis, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('../lib/helpers');
 
 function sanitize(str, maxLen = 120) {
   return String(str || '').trim().slice(0, maxLen);
@@ -128,3 +128,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to deliver course. Please contact support.' });
   }
 };
+

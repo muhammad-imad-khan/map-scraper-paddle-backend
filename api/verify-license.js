@@ -4,7 +4,7 @@
 //
 // License keys are stored in a simple in-memory Map for sandbox testing.
 // For production, replace with a database (e.g. Vercel KV, Supabase, etc.)
-const { cors, PRICE_CREDITS } = require('./_helpers');
+const { cors, PRICE_CREDITS } = require('../lib/helpers');
 
 // ── In-memory license store (server-level, persists per-instance) ──
 // Format: key → { credits, label, used: false, createdAt, txnId }
@@ -48,3 +48,4 @@ module.exports = async function handler(req, res) {
 
 // Export store so webhook handler can write to it
 module.exports._licenseStore = licenseStore;
+

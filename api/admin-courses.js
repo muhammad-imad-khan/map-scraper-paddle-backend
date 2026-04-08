@@ -10,7 +10,7 @@ const {
   sendPortalAccessEmail,
   safeParse,
   DEFAULT_COURSE_ID,
-} = require('./_helpers');
+} = require('../lib/helpers');
 
 function getAdminKey(req) {
   const fromHeader = (req.headers['x-admin-key'] || '').toString().trim();

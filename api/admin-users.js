@@ -9,7 +9,7 @@
 // Auth:
 //   X-Admin-Key: <ADMIN_API_KEY>
 //   or Authorization: Bearer <ADMIN_API_KEY>
-const { cors, getRedis, keys, isValidInstallId, sendPurchaseNotification } = require('./_helpers');
+const { cors, getRedis, keys, isValidInstallId, sendPurchaseNotification } = require('../lib/helpers');
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -513,7 +513,7 @@ module.exports = async function handler(req, res) {
 
       // Add credits if installId and credits provided
       if (installId && isValidInstallId(installId) && credits > 0) {
-        const { addCredits } = require('./_helpers');
+        const { addCredits } = require('../lib/helpers');
         await addCredits(installId, credits, `banktransfer:${btId}`);
         bt.installId = installId;
       }
@@ -550,3 +550,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
+

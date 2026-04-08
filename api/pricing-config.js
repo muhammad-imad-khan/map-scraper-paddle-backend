@@ -2,7 +2,7 @@
 // - return public pricing mode/config (used by web + extension)
 // POST /api/pricing-config
 // - Admin only: update pricing mode
-const { cors, getRedis } = require('./_helpers');
+const { cors, getRedis } = require('../lib/helpers');
 
 const PRICING_MODE_KEY = 'cfg:pricing_mode';
 const PRICING_MODE_CREDIT = 'credit_based';
@@ -115,3 +115,4 @@ module.exports = async function handler(req, res) {
   const mode = await getPricingMode();
   return res.status(200).json({ mode, pricing: buildPublicPricing(mode) });
 };
+

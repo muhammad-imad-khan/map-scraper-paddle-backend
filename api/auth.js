@@ -2,7 +2,7 @@
 // Actions: register, login, me, logout
 // Stores users in Redis with PBKDF2 password hashing
 const crypto = require('crypto');
-const { cors, getRedis } = require('./_helpers');
+const { cors, getRedis } = require('../lib/helpers');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -152,3 +152,4 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Internal server error.' });
   }
 };
+
