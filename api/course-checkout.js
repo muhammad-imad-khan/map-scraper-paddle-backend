@@ -57,6 +57,7 @@ module.exports = async function handler(req, res) {
       txnId: data?.data?.id || null,
       label: 'Lead Gen x AI Web Design Course',
       course: true,
+      courseId: process.env.DEFAULT_COURSE_ID || 'lead-gen-ai-web-design',
     });
     await redis.set(userKey, JSON.stringify(userData));
 

@@ -12,6 +12,43 @@ try {
   google = null;
 }
 
+function sanitizeText(value, maxLen = 200) {
+  return String(value || '').trim().slice(0, maxLen);
+}
+
+function isValidEmail(email) {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
+}
+
+function slugify(value) {
+  return sanitizeText(value, 120)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function createId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function safeParse(json, fallback = null) {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return fallback;
+  }
+}
+
+function hashPassword(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.pbkdf2(password, salt, 100000, 64, 'sha512', (err, derived) => {
+      if (err) reject(err);
+      else resolve(derived.toString('hex'));
+    });
+  });
+}
+
 const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim();
 
 const BASE_URL = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
@@ -54,6 +91,15 @@ const keys = {
   txnDedup:  (txnId) => `txn:${txnId}`,
   install:   (id) => `install:${id}`,
   stats:     (name) => `stats:${name}`,
+};
+
+const courseKeys = {
+  index: () => 'courses:index',
+  item: (courseId) => `course:${courseId}`,
+  enrollment: (email, courseId) => `course-enrollment:${sanitizeText(email, 254).toLowerCase()}:${courseId}`,
+  enrollmentListByCourse: (courseId) => `course-enrollments:${courseId}`,
+  enrollmentListByUser: (email) => `user-course-enrollments:${sanitizeText(email, 254).toLowerCase()}`,
+  progress: (email, courseId) => `course-progress:${sanitizeText(email, 254).toLowerCase()}:${courseId}`,
 };
 
 // ── Credit operations (all server-side, atomic) ───────────
@@ -465,6 +511,415 @@ async function sendCourseDeliveryEmail({ email, name, txnId, shareResult }) {
   }
 }
 
+const DEFAULT_COURSE_ID = process.env.DEFAULT_COURSE_ID || 'lead-gen-ai-web-design';
+const CUSTOMER_PORTAL_URL = process.env.CUSTOMER_PORTAL_URL || 'https://map-scrapper-five.vercel.app/portal/';
+
+function normalizeCourseItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map((item, itemIndex) => ({
+    id: sanitizeText(item?.id || `item-${itemIndex + 1}`, 80) || `item-${itemIndex + 1}`,
+    title: sanitizeText(item?.title || `Lesson ${itemIndex + 1}`, 160) || `Lesson ${itemIndex + 1}`,
+    type: ['video', 'pdf', 'link', 'embed'].includes(item?.type) ? item.type : 'link',
+    url: sanitizeText(item?.url || '', 2000),
+    description: sanitizeText(item?.description || '', 400),
+    durationMinutes: Number.isFinite(Number(item?.durationMinutes)) ? Number(item.durationMinutes) : null,
+  }));
+}
+
+function normalizeCourseModules(modules) {
+  if (!Array.isArray(modules)) return [];
+  return modules.map((module, moduleIndex) => ({
+    id: sanitizeText(module?.id || `module-${moduleIndex + 1}`, 80) || `module-${moduleIndex + 1}`,
+    title: sanitizeText(module?.title || `Module ${moduleIndex + 1}`, 160) || `Module ${moduleIndex + 1}`,
+    description: sanitizeText(module?.description || '', 400),
+    items: normalizeCourseItems(module?.items),
+  }));
+}
+
+function buildDefaultCourse() {
+  return {
+    id: DEFAULT_COURSE_ID,
+    slug: DEFAULT_COURSE_ID,
+    title: 'Lead Gen x AI Powered Web Design',
+    shortDescription: 'Sell websites using scraped leads, AI workflows, and a repeatable client-close system.',
+    description: 'Core course workspace for videos, PDFs, prompts, and delivery assets.',
+    status: 'published',
+    priceId: process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty',
+    coverImage: '',
+    modules: [
+      {
+        id: 'starter-resources',
+        title: 'Starter Resources',
+        description: 'Primary course access and handoff resources.',
+        items: [
+          {
+            id: 'drive-folder',
+            title: 'Course Resource Folder',
+            type: 'link',
+            url: COURSE_DRIVE_LINK,
+            description: 'Main course folder with the latest videos, PDFs, and templates.',
+            durationMinutes: null,
+          },
+        ],
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function listIndexValues(redis, key) {
+  const values = await redis.lrange(key, 0, -1);
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+async function ensureIndexed(redis, listKey, value) {
+  if (!value) return;
+  const items = await listIndexValues(redis, listKey);
+  if (!items.includes(value)) {
+    await redis.rpush(listKey, value);
+  }
+}
+
+async function ensureDefaultCourse(redis = getRedis()) {
+  const existing = await redis.get(courseKeys.item(DEFAULT_COURSE_ID));
+  if (existing) {
+    await ensureIndexed(redis, courseKeys.index(), DEFAULT_COURSE_ID);
+    return safeParse(existing, buildDefaultCourse());
+  }
+  const course = buildDefaultCourse();
+  await redis.set(courseKeys.item(course.id), JSON.stringify(course));
+  await ensureIndexed(redis, courseKeys.index(), course.id);
+  return course;
+}
+
+async function getCourse(courseId, redis = getRedis()) {
+  await ensureDefaultCourse(redis);
+  const normalizedId = sanitizeText(courseId || DEFAULT_COURSE_ID, 120) || DEFAULT_COURSE_ID;
+  const raw = await redis.get(courseKeys.item(normalizedId));
+  return safeParse(raw, null);
+}
+
+async function listCourses(redis = getRedis()) {
+  await ensureDefaultCourse(redis);
+  const ids = await listIndexValues(redis, courseKeys.index());
+  if (!ids.length) return [];
+  const pipe = redis.pipeline();
+  ids.forEach((id) => pipe.get(courseKeys.item(id)));
+  const results = await pipe.exec();
+  return results
+    .map((entry) => safeParse(entry && entry[1], null))
+    .filter(Boolean)
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
+
+async function saveCourse(input, redis = getRedis()) {
+  await ensureDefaultCourse(redis);
+  const now = new Date().toISOString();
+  const draftId = sanitizeText(input?.id, 120);
+  const draftSlug = slugify(input?.slug || input?.title || draftId || createId('course')) || createId('course');
+  const courseId = draftId || draftSlug;
+  const existing = await getCourse(courseId, redis);
+  const course = {
+    id: courseId,
+    slug: draftSlug,
+    title: sanitizeText(input?.title || existing?.title || 'Untitled Course', 160) || 'Untitled Course',
+    shortDescription: sanitizeText(input?.shortDescription || existing?.shortDescription || '', 240),
+    description: sanitizeText(input?.description || existing?.description || '', 4000),
+    status: ['draft', 'published', 'archived'].includes(input?.status) ? input.status : (existing?.status || 'draft'),
+    priceId: sanitizeText(input?.priceId || existing?.priceId || process.env.PRICE_COURSE_ID || '', 120),
+    coverImage: sanitizeText(input?.coverImage || existing?.coverImage || '', 2000),
+    modules: normalizeCourseModules(Array.isArray(input?.modules) ? input.modules : (existing?.modules || [])),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+
+  await redis.set(courseKeys.item(course.id), JSON.stringify(course));
+  await ensureIndexed(redis, courseKeys.index(), course.id);
+  return course;
+}
+
+async function deleteCourse(courseId, redis = getRedis()) {
+  const normalizedId = sanitizeText(courseId, 120);
+  if (!normalizedId || normalizedId === DEFAULT_COURSE_ID) {
+    throw new Error('Default course cannot be deleted.');
+  }
+  await redis.del(courseKeys.item(normalizedId));
+  await redis.lrem(courseKeys.index(), 0, normalizedId);
+}
+
+function defaultProgress() {
+  return {
+    completedItemIds: [],
+    secondsByItem: {},
+    percent: 0,
+    lastItemId: null,
+    lastSeenAt: null,
+  };
+}
+
+function calculateCourseProgress(course, progress) {
+  const totalItems = Array.isArray(course?.modules)
+    ? course.modules.reduce((sum, module) => sum + (Array.isArray(module.items) ? module.items.length : 0), 0)
+    : 0;
+  if (!totalItems) return 0;
+  const completed = Array.isArray(progress?.completedItemIds) ? progress.completedItemIds.length : 0;
+  return Math.min(100, Math.round((completed / totalItems) * 100));
+}
+
+async function getEnrollment(email, courseId, redis = getRedis()) {
+  const normalizedEmail = sanitizeText(email, 254).toLowerCase();
+  const normalizedCourseId = sanitizeText(courseId || DEFAULT_COURSE_ID, 120) || DEFAULT_COURSE_ID;
+  const raw = await redis.get(courseKeys.enrollment(normalizedEmail, normalizedCourseId));
+  return safeParse(raw, null);
+}
+
+async function listEnrollments({ courseId, email } = {}, redis = getRedis()) {
+  await ensureDefaultCourse(redis);
+  const normalizedCourseId = sanitizeText(courseId || '', 120);
+  const normalizedEmail = sanitizeText(email || '', 254).toLowerCase();
+
+  let keysToLoad = [];
+  if (normalizedCourseId) {
+    const refs = await listIndexValues(redis, courseKeys.enrollmentListByCourse(normalizedCourseId));
+    keysToLoad = refs.map((entryEmail) => courseKeys.enrollment(entryEmail, normalizedCourseId));
+  } else if (normalizedEmail) {
+    const refs = await listIndexValues(redis, courseKeys.enrollmentListByUser(normalizedEmail));
+    keysToLoad = refs.map((entryCourseId) => courseKeys.enrollment(normalizedEmail, entryCourseId));
+  } else {
+    const found = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', 'course-enrollment:*', 'COUNT', 200);
+      cursor = nextCursor;
+      found.push(...batch);
+    } while (cursor !== '0');
+    keysToLoad = found;
+  }
+
+  if (!keysToLoad.length) return [];
+  const pipe = redis.pipeline();
+  keysToLoad.forEach((key) => pipe.get(key));
+  const rows = await pipe.exec();
+
+  const enrollments = [];
+  for (const row of rows) {
+    const enrollment = safeParse(row && row[1], null);
+    if (!enrollment) continue;
+    const course = await getCourse(enrollment.courseId, redis);
+    const progressRaw = await redis.get(courseKeys.progress(enrollment.email, enrollment.courseId));
+    const progress = safeParse(progressRaw, defaultProgress()) || defaultProgress();
+    progress.percent = calculateCourseProgress(course, progress);
+    enrollments.push({ ...enrollment, course, progress });
+  }
+
+  return enrollments.sort((a, b) => String(b.updatedAt || b.grantedAt || '').localeCompare(String(a.updatedAt || a.grantedAt || '')));
+}
+
+async function ensureUserForCourseAccess({ email, name }, redis = getRedis()) {
+  const normalizedEmail = sanitizeText(email, 254).toLowerCase();
+  const userKey = `user:${normalizedEmail}`;
+  const existingRaw = await redis.get(userKey);
+  if (existingRaw) {
+    const user = safeParse(existingRaw, null);
+    if (user) {
+      user.name = sanitizeText(name || user.name || '', 100) || user.name || '';
+      user.email = normalizedEmail;
+      user.purchases = Array.isArray(user.purchases) ? user.purchases : [];
+      await redis.set(userKey, JSON.stringify(user));
+      return { user, createdAccount: false, temporaryPassword: null };
+    }
+  }
+
+  const temporaryPassword = Math.random().toString(36).slice(2, 10) + 'A1!';
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = await hashPassword(temporaryPassword, salt);
+  const user = {
+    name: sanitizeText(name || normalizedEmail.split('@')[0], 100),
+    email: normalizedEmail,
+    passwordHash,
+    salt,
+    createdAt: new Date().toISOString(),
+    purchases: [],
+    portalAccessCreatedBySystem: true,
+  };
+  await redis.set(userKey, JSON.stringify(user));
+  return { user, createdAccount: true, temporaryPassword };
+}
+
+async function sendPortalAccessEmail({ email, name, course, createdAccount, temporaryPassword, progressUrl }) {
+  const transport = getMailTransport();
+  if (!transport || !email || !course) return;
+
+  const loginLine = createdAccount
+    ? `<p style="font-size:14px;color:#334155;margin:0 0 14px;">We created your portal account automatically.<br><strong>Email:</strong> ${email}<br><strong>Temporary password:</strong> ${temporaryPassword}</p>`
+    : '<p style="font-size:14px;color:#334155;margin:0 0 14px;">Use your existing portal account to access the course. If you have not logged in before, use the same email address and reset/register from the customer portal.</p>';
+
+  const html = `
+    <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <div style="background:linear-gradient(135deg,#0f172a,#1d4ed8);padding:24px;color:#fff;">
+        <h2 style="margin:0;font-size:22px;">Your Course Portal Access Is Ready</h2>
+        <p style="margin:8px 0 0;font-size:13px;opacity:.9;">${sanitizeText(course.title, 160)}</p>
+      </div>
+      <div style="padding:24px;">
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Hi${name ? ' ' + sanitizeText(name, 100) : ''},</p>
+        <p style="font-size:14px;color:#334155;margin:0 0 14px;">Your purchase has been activated. You can now open your customer portal, view your purchased course, watch lessons, open PDFs, and track your progress.</p>
+        ${loginLine}
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${progressUrl || CUSTOMER_PORTAL_URL}" style="display:inline-block;background:#2563eb;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px;">Open Customer Portal</a>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
+          <tr><td style="padding:6px 0;color:#64748b;width:120px;">Course</td><td style="padding:6px 0;font-weight:600;color:#334155;">${sanitizeText(course.title, 160)}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Portal</td><td style="padding:6px 0;color:#334155;">${progressUrl || CUSTOMER_PORTAL_URL}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Status</td><td style="padding:6px 0;color:#334155;">Activated</td></tr>
+        </table>
+      </div>
+      <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
+        Map Lead Scraper - Customer Portal Access
+      </div>
+    </div>
+  `;
+
+  await transport.sendMail({
+    from: `"Imad Khan Courses" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: `Portal Access: ${sanitizeText(course.title, 120)}`,
+    html,
+  });
+}
+
+async function grantCourseAccess({
+  email,
+  name,
+  courseId,
+  source = 'admin',
+  txnId = null,
+  bankTransferId = null,
+  amount = null,
+  currency = null,
+  sendEmail = false,
+  forceEmail = false,
+} = {}, redis = getRedis()) {
+  const normalizedEmail = sanitizeText(email, 254).toLowerCase();
+  if (!isValidEmail(normalizedEmail)) {
+    throw new Error('Valid email is required.');
+  }
+
+  const course = await getCourse(courseId || DEFAULT_COURSE_ID, redis);
+  if (!course) {
+    throw new Error('Course not found.');
+  }
+
+  const now = new Date().toISOString();
+  const { user, createdAccount, temporaryPassword } = await ensureUserForCourseAccess({ email: normalizedEmail, name }, redis);
+  const enrollmentKey = courseKeys.enrollment(normalizedEmail, course.id);
+  const existingEnrollment = await getEnrollment(normalizedEmail, course.id, redis);
+  const existingProgressRaw = await redis.get(courseKeys.progress(normalizedEmail, course.id));
+  const progress = safeParse(existingProgressRaw, defaultProgress()) || defaultProgress();
+  progress.percent = calculateCourseProgress(course, progress);
+
+  const enrollment = {
+    email: normalizedEmail,
+    name: sanitizeText(name || user.name || '', 100),
+    courseId: course.id,
+    courseTitle: course.title,
+    source,
+    txnId: txnId || existingEnrollment?.txnId || null,
+    bankTransferId: bankTransferId || existingEnrollment?.bankTransferId || null,
+    status: 'active',
+    grantedAt: existingEnrollment?.grantedAt || now,
+    updatedAt: now,
+    lastAccessEmailAt: existingEnrollment?.lastAccessEmailAt || null,
+  };
+
+  user.purchases = Array.isArray(user.purchases) ? user.purchases : [];
+  const existingPurchase = user.purchases.find((purchase) => purchase.courseId === course.id || (purchase.course === true && purchase.label === course.title));
+  if (existingPurchase) {
+    existingPurchase.status = 'completed';
+    existingPurchase.completedAt = now;
+    existingPurchase.course = true;
+    existingPurchase.courseId = course.id;
+    existingPurchase.label = course.title;
+    existingPurchase.priceId = course.priceId || existingPurchase.priceId || null;
+    existingPurchase.txnId = txnId || existingPurchase.txnId || null;
+    existingPurchase.amount = amount || existingPurchase.amount || null;
+    existingPurchase.currency = currency || existingPurchase.currency || null;
+    existingPurchase.source = source;
+  } else {
+    user.purchases.push({
+      priceId: course.priceId || process.env.PRICE_COURSE_ID || null,
+      installId: null,
+      status: 'completed',
+      createdAt: now,
+      completedAt: now,
+      txnId,
+      label: course.title,
+      course: true,
+      courseId: course.id,
+      amount,
+      currency,
+      source,
+    });
+  }
+
+  await redis.set(`user:${normalizedEmail}`, JSON.stringify(user));
+  await redis.set(enrollmentKey, JSON.stringify(enrollment));
+  await ensureIndexed(redis, courseKeys.enrollmentListByCourse(course.id), normalizedEmail);
+  await ensureIndexed(redis, courseKeys.enrollmentListByUser(normalizedEmail), course.id);
+  await redis.set(courseKeys.progress(normalizedEmail, course.id), JSON.stringify(progress));
+
+  if (sendEmail && (forceEmail || !existingEnrollment?.lastAccessEmailAt)) {
+    await sendPortalAccessEmail({
+      email: normalizedEmail,
+      name: enrollment.name,
+      course,
+      createdAccount,
+      temporaryPassword,
+      progressUrl: `${CUSTOMER_PORTAL_URL}?course=${encodeURIComponent(course.id)}`,
+    });
+    enrollment.lastAccessEmailAt = now;
+    await redis.set(enrollmentKey, JSON.stringify(enrollment));
+  }
+
+  return { enrollment, course, user, createdAccount, temporaryPassword, progress };
+}
+
+async function updateCourseProgress({ email, courseId, itemId, completed, secondsWatched = 0 } = {}, redis = getRedis()) {
+  const normalizedEmail = sanitizeText(email, 254).toLowerCase();
+  const normalizedCourseId = sanitizeText(courseId || DEFAULT_COURSE_ID, 120) || DEFAULT_COURSE_ID;
+  const normalizedItemId = sanitizeText(itemId, 120);
+  if (!normalizedEmail || !normalizedItemId) {
+    throw new Error('email and itemId are required.');
+  }
+
+  const course = await getCourse(normalizedCourseId, redis);
+  if (!course) throw new Error('Course not found.');
+
+  const progressKey = courseKeys.progress(normalizedEmail, normalizedCourseId);
+  const raw = await redis.get(progressKey);
+  const progress = safeParse(raw, defaultProgress()) || defaultProgress();
+  progress.completedItemIds = Array.isArray(progress.completedItemIds) ? progress.completedItemIds : [];
+  progress.secondsByItem = progress.secondsByItem && typeof progress.secondsByItem === 'object' ? progress.secondsByItem : {};
+
+  if (completed === true) {
+    if (!progress.completedItemIds.includes(normalizedItemId)) {
+      progress.completedItemIds.push(normalizedItemId);
+    }
+  } else if (completed === false) {
+    progress.completedItemIds = progress.completedItemIds.filter((id) => id !== normalizedItemId);
+  }
+
+  if (Number.isFinite(Number(secondsWatched)) && Number(secondsWatched) > 0) {
+    progress.secondsByItem[normalizedItemId] = Math.max(Number(progress.secondsByItem[normalizedItemId] || 0), Number(secondsWatched));
+  }
+
+  progress.lastItemId = normalizedItemId;
+  progress.lastSeenAt = new Date().toISOString();
+  progress.percent = calculateCourseProgress(course, progress);
+  await redis.set(progressKey, JSON.stringify(progress));
+  return progress;
+}
+
 module.exports = {
   PADDLE_ENV, BASE_URL, PADDLE_API_KEY, PRICE_CREDITS, FREE_STARTER_CREDITS, CREDITS_EXPIRY_DAYS,
   LOW_CREDITS_THRESHOLD,
@@ -472,5 +927,10 @@ module.exports = {
   getCredits, initUser, addCredits, deductCredits, isValidInstallId,
   sendPurchaseNotification, sendZipDeliveryEmail, sendCourseDeliveryEmail, shareCourseFolderAccess,
   sendInstallNotification, sendLowCreditsEmail, ADMIN_EMAIL,
+  DEFAULT_COURSE_ID, CUSTOMER_PORTAL_URL, courseKeys,
+  sanitizeText, isValidEmail, slugify, safeParse,
+  ensureDefaultCourse, listCourses, getCourse, saveCourse, deleteCourse,
+  listEnrollments, getEnrollment, grantCourseAccess, updateCourseProgress,
+  sendPortalAccessEmail,
 };
 

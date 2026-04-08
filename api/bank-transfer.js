@@ -1,6 +1,7 @@
 // POST /api/bank-transfer
 // Creates a bank transfer request record and notifies admin.
-// Body: { pack, email, name, installId, reference }
+// Supports both credit-pack and course purchases.
+// Body: { pack, email, name, installId, reference, purchaseType, courseId, receiptDataUrl, receiptName, receiptMimeType }
 const { cors, getRedis, sendPurchaseNotification, ADMIN_EMAIL } = require('./_helpers');
 const nodemailer = require('nodemailer');
 
@@ -16,7 +17,20 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { pack, email, name, installId, reference } = req.body || {};
+  const {
+    pack,
+    email,
+    name,
+    installId,
+    reference,
+    purchaseType,
+    courseId,
+    receiptDataUrl,
+    receiptName,
+    receiptMimeType,
+    amount,
+    currency,
+  } = req.body || {};
 
   if (!pack || !email) {
     return res.status(400).json({ error: 'Missing pack or email.' });
@@ -36,6 +50,13 @@ module.exports = async function handler(req, res) {
       name: (name || '').trim(),
       installId: installId || null,
       reference: reference || null,
+      purchaseType: purchaseType === 'course' ? 'course' : 'credits',
+      courseId: courseId || null,
+      receiptDataUrl: typeof receiptDataUrl === 'string' ? receiptDataUrl.slice(0, 2_000_000) : null,
+      receiptName: typeof receiptName === 'string' ? receiptName.slice(0, 180) : null,
+      receiptMimeType: typeof receiptMimeType === 'string' ? receiptMimeType.slice(0, 120) : null,
+      amount: amount || null,
+      currency: currency || null,
       status: 'pending',
       createdAt: new Date().toISOString(),
       approvedAt: null,
@@ -60,13 +81,15 @@ module.exports = async function handler(req, res) {
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
               <tr><td style="padding:8px 0;color:#64748b;width:130px;">Customer</td><td style="padding:8px 0;font-weight:600;">${record.name || 'N/A'}</td></tr>
               <tr><td style="padding:8px 0;color:#64748b;">Email</td><td style="padding:8px 0;">${record.email}</td></tr>
+              <tr><td style="padding:8px 0;color:#64748b;">Type</td><td style="padding:8px 0;font-weight:600;">${record.purchaseType === 'course' ? 'Course access' : 'Credit pack'}</td></tr>
               <tr><td style="padding:8px 0;color:#64748b;">Pack</td><td style="padding:8px 0;font-weight:600;">${record.pack}</td></tr>
               <tr><td style="padding:8px 0;color:#64748b;">Reference</td><td style="padding:8px 0;">${record.reference || 'N/A'}</td></tr>
+              <tr><td style="padding:8px 0;color:#64748b;">Receipt</td><td style="padding:8px 0;">${record.receiptName || 'Not attached'}</td></tr>
               <tr><td style="padding:8px 0;color:#64748b;">Request ID</td><td style="padding:8px 0;font-size:12px;">${id}</td></tr>
               <tr><td style="padding:8px 0;color:#64748b;">Date</td><td style="padding:8px 0;">${record.createdAt}</td></tr>
             </table>
             <div style="margin-top:20px;text-align:center;">
-              <a href="https://map-scrapper-five.vercel.app/admin/" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">Approve in Admin Panel</a>
+              <a href="https://map-scrapper-five.vercel.app/admin/${record.purchaseType === 'course' ? 'courses.html' : ''}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">Open Admin Panel</a>
             </div>
           </div>
           <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
@@ -82,7 +105,13 @@ module.exports = async function handler(req, res) {
       }).catch(err => console.error('Failed to send bank transfer notification:', err.message));
     }
 
-    return res.status(200).json({ ok: true, id, message: 'Transfer recorded. Admin will verify and activate your credits.' });
+    return res.status(200).json({
+      ok: true,
+      id,
+      message: record.purchaseType === 'course'
+        ? 'Transfer recorded. Admin will verify your receipt and activate your course portal access.'
+        : 'Transfer recorded. Admin will verify and activate your credits.',
+    });
   } catch (err) {
     console.error('bank-transfer error:', err);
     return res.status(500).json({ error: 'Internal server error' });

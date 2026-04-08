@@ -3,7 +3,7 @@
 // Verifies the transaction via Paddle API, then sends course email directly.
 // Body: { email: "buyer@example.com", txnId?: "txn_..." }
 // This bypasses webhook entirely — reliable in sandbox and production.
-const { cors, getRedis, sendCourseDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY } = require('./_helpers');
+const { cors, getRedis, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('./_helpers');
 
 function sanitize(str, maxLen = 120) {
   return String(str || '').trim().slice(0, maxLen);
@@ -95,19 +95,21 @@ module.exports = async function handler(req, res) {
     // ── Share Google Drive access ──
     const shareResult = await shareCourseFolderAccess({ email });
 
-    // ── Send course delivery email ──
-    await sendCourseDeliveryEmail({
+    const portalResult = await grantCourseAccess({
       email,
       name: userName,
+      courseId: DEFAULT_COURSE_ID,
+      source: 'paddle_redirect',
       txnId: txnId || 'direct-delivery',
-      shareResult,
-    });
+      sendEmail: true,
+    }, redis);
 
     // ── Mark as delivered (expires in 30 days) ──
     await redis.set(dedupKey, JSON.stringify({
       email,
       txnId,
       sharedDrive: shareResult?.ok || false,
+      portalAccessGranted: Boolean(portalResult?.enrollment),
       deliveredAt: new Date().toISOString(),
     }), 'EX', 60 * 60 * 24 * 30);
 
@@ -119,6 +121,7 @@ module.exports = async function handler(req, res) {
       driveShared: shareResult?.ok || false,
       driveError: shareResult?.ok ? null : (shareResult?.reason || 'unknown'),
       txnVerified,
+      portalAccessGranted: Boolean(portalResult?.enrollment),
     });
   } catch (err) {
     console.error('Course deliver error:', err);
