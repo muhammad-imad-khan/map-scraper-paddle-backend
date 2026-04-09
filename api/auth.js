@@ -84,11 +84,18 @@ async function validateSession(redis, req, token, clientId, { touch = false } = 
 }
 
 function getLifetimePriceIds() {
+  const coursePriceIds = new Set([
+    String(PRICE_IDS.course || '').trim(),
+    String(PRICE_IDS.courseIntl || '').trim(),
+  ].filter(Boolean));
   return new Set([
     PRICE_IDS.oneTimePk,
     PRICE_IDS.oneTimeIntl,
     PRICE_IDS.checkoutFallback,
-  ]);
+  ].filter((priceId) => {
+    const normalized = String(priceId || '').trim();
+    return normalized && !coursePriceIds.has(normalized);
+  }));
 }
 
 module.exports = async function handler(req, res) {

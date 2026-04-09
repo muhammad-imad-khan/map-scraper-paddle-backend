@@ -5,36 +5,59 @@
 const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis, FRONTEND_URL, PRICE_IDS } = require('../lib/helpers');
 const crypto = require('crypto');
 
+const COURSE_PRICE_IDS = new Set([
+  String(PRICE_IDS.course || '').trim(),
+  String(PRICE_IDS.courseIntl || '').trim(),
+].filter(Boolean));
+
+function normalizeToolPriceId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized.startsWith('pri_')) return '';
+  if (COURSE_PRICE_IDS.has(normalized)) return '';
+  return normalized;
+}
+
 const PRICE_MAP = {
-  pro: PRICE_IDS.pro,
-  enterprise: PRICE_IDS.enterprise,
-  lifetimePk: PRICE_IDS.oneTimePk,
-  lifetimeIntl: PRICE_IDS.oneTimeIntl,
-  fallback: PRICE_IDS.checkoutFallback,
+  pro: normalizeToolPriceId(PRICE_IDS.pro),
+  enterprise: normalizeToolPriceId(PRICE_IDS.enterprise),
+  lifetimePk: normalizeToolPriceId(PRICE_IDS.oneTimePk),
+  lifetimeIntl: normalizeToolPriceId(PRICE_IDS.oneTimeIntl),
+  fallback: normalizeToolPriceId(PRICE_IDS.checkoutFallback),
 };
+
+const ALL_TOOL_PRICE_IDS = Object.values(PRICE_MAP).filter(Boolean);
+
+function getPackCandidatePriceIds(packKey, isPakistan) {
+  if (packKey === 'pro') return [PRICE_MAP.pro];
+  if (packKey === 'enterprise') return [PRICE_MAP.enterprise];
+  if (packKey === 'lifetime') {
+    return [
+      isPakistan ? PRICE_MAP.lifetimePk : PRICE_MAP.lifetimeIntl,
+      isPakistan ? PRICE_MAP.lifetimeIntl : PRICE_MAP.lifetimePk,
+      PRICE_MAP.fallback,
+    ];
+  }
+  return [];
+}
 
 function resolvePriceIds({ priceId, pack, country, currency }) {
   const requested = String(priceId || '').trim();
   const packKey = String(pack || '').trim().toLowerCase();
   const normalizedCountry = String(country || '').trim();
   const normalizedCurrency = String(currency || '').trim().toUpperCase();
+  const isPakistan = normalizedCountry === 'Pakistan' || normalizedCurrency === 'PKR';
+  const packCandidates = getPackCandidatePriceIds(packKey, isPakistan).filter(Boolean);
 
   const candidates = [];
-  const allowed = new Set(Object.values(PRICE_MAP).filter(Boolean));
-  if (requested && requested.startsWith('pri_')) {
+  const requestedAllowed = requested
+    && requested.startsWith('pri_')
+    && (packKey ? packCandidates.includes(requested) : ALL_TOOL_PRICE_IDS.includes(requested));
+  if (requestedAllowed) {
     candidates.push(requested);
   }
 
-  const isPakistan = normalizedCountry === 'Pakistan' || normalizedCurrency === 'PKR';
-
-  if (packKey === 'pro') {
-    candidates.push(PRICE_MAP.pro);
-  } else if (packKey === 'enterprise') {
-    candidates.push(PRICE_MAP.enterprise);
-  } else if (packKey === 'lifetime') {
-    candidates.push(isPakistan ? PRICE_MAP.lifetimePk : PRICE_MAP.lifetimeIntl);
-    candidates.push(isPakistan ? PRICE_MAP.lifetimeIntl : PRICE_MAP.lifetimePk);
-    candidates.push(PRICE_MAP.fallback);
+  if (packKey) {
+    candidates.push(...packCandidates);
   }
 
   const deduped = [];
@@ -43,9 +66,7 @@ function resolvePriceIds({ priceId, pack, country, currency }) {
     if (!id || !id.startsWith('pri_')) continue;
     if (seen.has(id)) continue;
     seen.add(id);
-    if (allowed.has(id) || requested === id) {
-      deduped.push(id);
-    }
+    deduped.push(id);
   }
   return deduped;
 }
