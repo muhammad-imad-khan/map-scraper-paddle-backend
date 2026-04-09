@@ -2,7 +2,7 @@
 // Creates a Paddle transaction and returns the checkout URL.
 // Body: { priceId: "pri_...", installId: "uuid", token: "auth_token" }
 // Requires auth. Links payment to user email via custom_data.
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis, FRONTEND_URL, PRICE_IDS } = require('../lib/helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis, FRONTEND_URL, PRICE_IDS, PRICE_CREDITS, deliverToolPurchase } = require('../lib/helpers');
 const crypto = require('crypto');
 
 const COURSE_PRICE_IDS = new Set([
@@ -87,16 +87,46 @@ function buildSessionFingerprint(req) {
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
 }
 
+function resolveMatchingPurchase(purchases, txnId, installId) {
+  if (!Array.isArray(purchases)) return null;
+  const normalizedTxnId = String(txnId || '').trim();
+  const normalizedInstallId = String(installId || '').trim();
+  return purchases.find((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    if (normalizedTxnId && String(entry.txnId || '').trim() === normalizedTxnId) return true;
+    if (!normalizedInstallId) return false;
+    return String(entry.installId || '').trim() === normalizedInstallId;
+  }) || null;
+}
+
+async function verifyTransaction(txnId) {
+  if (!txnId || !PADDLE_API_KEY) return null;
+  try {
+    const resp = await fetch(`${BASE_URL}/transactions/${txnId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${PADDLE_API_KEY}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = await resp.json().catch(() => ({}));
+    return data?.data || null;
+  } catch (err) {
+    console.error('Tool transaction verification failed:', err?.message || err);
+    return null;
+  }
+}
+
 module.exports = async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (!PADDLE_API_KEY) {
+  const { priceId, installId, token, clientId: rawClientId, pack, country, currency, action, txnId, forceResend } = req.body || {};
+
+  if (action !== 'deliverToolPurchase' && !PADDLE_API_KEY) {
     return res.status(500).json({ error: 'PADDLE_API_KEY not configured' });
   }
-
-  const { priceId, installId, token, clientId: rawClientId, pack, country, currency } = req.body || {};
 
   // ── Verify auth token ──
   if (!token || typeof token !== 'string') {
@@ -121,6 +151,98 @@ module.exports = async function handler(req, res) {
     }
   }
   const userEmail = session.email;
+  const userKey = `user:${userEmail}`;
+  const userRaw = await redis.get(userKey);
+
+  if (action === 'deliverToolPurchase') {
+    const purchases = Array.isArray(JSON.parse(userRaw || '{}')?.purchases)
+      ? JSON.parse(userRaw || '{}').purchases
+      : [];
+    const matchedPurchase = resolveMatchingPurchase(purchases, txnId, installId);
+    const verifiedTxn = txnId && String(txnId).trim().startsWith('txn_') ? await verifyTransaction(String(txnId).trim()) : null;
+    const txnStatus = String(verifiedTxn?.status || '').toLowerCase();
+    const txnVerified = txnStatus === 'completed' || txnStatus === 'billed';
+
+    if (!txnVerified && !matchedPurchase) {
+      return res.status(403).json({ error: 'Could not verify tool purchase yet.' });
+    }
+
+    const txnEmail = String(
+      verifiedTxn?.custom_data?.email
+        || verifiedTxn?.customer?.email
+        || verifiedTxn?.customer_details?.email
+        || verifiedTxn?.billing_details?.email
+        || ''
+    ).trim().toLowerCase();
+    if (txnVerified && txnEmail && txnEmail !== userEmail) {
+      return res.status(403).json({ error: 'This purchase belongs to a different account.' });
+    }
+
+    const effectivePriceId = String(verifiedTxn?.items?.[0]?.price?.id || matchedPurchase?.priceId || '').trim();
+    const purchaseMeta = PRICE_CREDITS[effectivePriceId] || null;
+    if (purchaseMeta?.course) {
+      return res.status(400).json({ error: 'Course purchases are handled by the course delivery flow.' });
+    }
+
+    const effectiveInstallId = String(
+      installId
+        || verifiedTxn?.custom_data?.installId
+        || matchedPurchase?.installId
+        || ''
+    ).trim();
+
+    const deliveryResult = await deliverToolPurchase({
+      redis,
+      email: userEmail,
+      name: session.name || '',
+      installId: effectiveInstallId,
+      txnId: String(txnId || matchedPurchase?.txnId || '').trim() || null,
+      forceResend: forceResend === true || forceResend === 'true',
+      priceId: effectivePriceId,
+      amount: verifiedTxn?.details?.totals?.total || matchedPurchase?.amount || null,
+      currency: verifiedTxn?.currency_code || matchedPurchase?.currency || null,
+      source: 'paddle_redirect',
+    });
+
+    if (!deliveryResult.ok) {
+      if (deliveryResult.entitlementGranted) {
+        return res.status(200).json({
+          ok: true,
+          txnId: deliveryResult.txnId || txnId || matchedPurchase?.txnId || null,
+          txnVerified,
+          entitlementGranted: true,
+          zipEmailSent: false,
+          alreadySent: false,
+          entitlements: {
+            lifetimeAccess: true,
+            zipDownload: true,
+          },
+          detail: deliveryResult.error || deliveryResult.reason || 'tool_email_failed',
+          warning: 'Payment was confirmed and download is unlocked, but the ZIP email could not be sent.',
+        });
+      }
+
+      return res.status(502).json({
+        error: 'Failed to finalize tool purchase.',
+        detail: deliveryResult.error || deliveryResult.reason || 'tool_delivery_failed',
+        txnVerified,
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      txnId: deliveryResult.txnId || txnId || matchedPurchase?.txnId || null,
+      txnVerified,
+      entitlementGranted: true,
+      zipEmailSent: deliveryResult.zipEmailSent || false,
+      alreadySent: deliveryResult.alreadySent || false,
+      deliveryProvider: deliveryResult.provider || null,
+      entitlements: {
+        lifetimeAccess: true,
+        zipDownload: true,
+      },
+    });
+  }
 
   const resolvedPriceIds = resolvePriceIds({ priceId, pack, country, currency });
   if (!resolvedPriceIds.length) {
@@ -173,8 +295,6 @@ module.exports = async function handler(req, res) {
     }
 
     // Record checkout attempt on user profile
-    const userKey = `user:${userEmail}`;
-    const userRaw = await redis.get(userKey);
     if (userRaw) {
       const userData = JSON.parse(userRaw);
       if (!userData.purchases) userData.purchases = [];

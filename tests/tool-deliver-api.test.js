@@ -9,13 +9,22 @@ const mockDeliverToolPurchase = jest.fn();
 jest.mock('ioredis', () => jest.fn(() => mockRedis));
 jest.mock('../lib/helpers', () => ({
   cors: jest.fn(),
-  getRedis: jest.fn(() => mockRedis),
-  deliverToolPurchase: (...args) => mockDeliverToolPurchase(...args),
+  paddleRequest: jest.fn(),
   BASE_URL: 'https://sandbox-api.paddle.com',
   PADDLE_API_KEY: '',
+  PADDLE_ENV: 'sandbox',
+  isValidInstallId: jest.fn(() => true),
+  initUser: jest.fn(),
+  getRedis: jest.fn(() => mockRedis),
+  FRONTEND_URL: 'https://map-scrapper-five.vercel.app',
+  PRICE_IDS: {
+    course: 'pri_test_course',
+    courseIntl: 'pri_test_course_intl',
+  },
   PRICE_CREDITS: {
     pri_test_tool: { credits: 0, label: 'Lifetime License', unlimited: true },
   },
+  deliverToolPurchase: (...args) => mockDeliverToolPurchase(...args),
   safeParse: (value, fallback = null) => {
     try {
       return JSON.parse(value);
@@ -51,18 +60,14 @@ describe('tool-deliver API', () => {
   let handler;
 
   beforeAll(() => {
-    handler = require('../api/tool-deliver');
+    handler = require('../api/checkout');
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockRedis.get.mockImplementation(async (key) => {
       if (key === 'session:test_token') {
-        return JSON.stringify({
-          email: 'buyer@example.com',
-          clientId: 'client_1234567890abcd',
-          fingerprint: 'fp_test',
-        });
+        return JSON.stringify({ email: 'buyer@example.com' });
       }
       if (key === 'user:buyer@example.com') {
         return JSON.stringify({
@@ -90,45 +95,15 @@ describe('tool-deliver API', () => {
 
     const req = {
       method: 'POST',
-      headers: {
-        'user-agent': 'jest',
-        'accept-language': 'en-US',
-        'sec-ch-ua': '',
-        'sec-ch-ua-platform': '',
-      },
+      headers: {},
       body: {
+        action: 'deliverToolPurchase',
         token: 'test_token',
         clientId: 'client_1234567890abcd',
         txnId: 'txn_test_tool',
         installId: 'install_test_1234',
       },
     };
-    const crypto = require('crypto');
-    req.headers['sec-ch-ua'] = '';
-    req.headers['sec-ch-ua-platform'] = '';
-    mockRedis.get.mockImplementation(async (key) => {
-      if (key === 'session:test_token') {
-        const raw = `${req.headers['user-agent']}|${req.headers['accept-language']}|${req.headers['sec-ch-ua']}|${req.headers['sec-ch-ua-platform']}`;
-        return JSON.stringify({
-          email: 'buyer@example.com',
-          clientId: 'client_1234567890abcd',
-          fingerprint: crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32),
-        });
-      }
-      if (key === 'user:buyer@example.com') {
-        return JSON.stringify({
-          email: 'buyer@example.com',
-          name: 'Buyer',
-          purchases: [{
-            txnId: 'txn_test_tool',
-            priceId: 'pri_test_tool',
-            installId: 'install_test_1234',
-            status: 'pending',
-          }],
-        });
-      }
-      return null;
-    });
     const res = createRes();
 
     await handler(req, res);
@@ -151,45 +126,15 @@ describe('tool-deliver API', () => {
 
     const req = {
       method: 'POST',
-      headers: {
-        'user-agent': 'jest',
-        'accept-language': 'en-US',
-        'sec-ch-ua': '',
-        'sec-ch-ua-platform': '',
-      },
+      headers: {},
       body: {
+        action: 'deliverToolPurchase',
         token: 'test_token',
         clientId: 'client_1234567890abcd',
         txnId: 'txn_test_tool',
         installId: 'install_test_1234',
       },
     };
-    const crypto = require('crypto');
-    req.headers['sec-ch-ua'] = '';
-    req.headers['sec-ch-ua-platform'] = '';
-    mockRedis.get.mockImplementation(async (key) => {
-      if (key === 'session:test_token') {
-        const raw = `${req.headers['user-agent']}|${req.headers['accept-language']}|${req.headers['sec-ch-ua']}|${req.headers['sec-ch-ua-platform']}`;
-        return JSON.stringify({
-          email: 'buyer@example.com',
-          clientId: 'client_1234567890abcd',
-          fingerprint: crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32),
-        });
-      }
-      if (key === 'user:buyer@example.com') {
-        return JSON.stringify({
-          email: 'buyer@example.com',
-          name: 'Buyer',
-          purchases: [{
-            txnId: 'txn_test_tool',
-            priceId: 'pri_test_tool',
-            installId: 'install_test_1234',
-            status: 'pending',
-          }],
-        });
-      }
-      return null;
-    });
     const res = createRes();
 
     await handler(req, res);
