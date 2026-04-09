@@ -8,8 +8,10 @@ const {
   getCourse,
   grantCourseAccess,
   sendPortalAccessEmail,
+  sendSimpleCourseLinkEmail,
   safeParse,
   DEFAULT_COURSE_ID,
+  CUSTOMER_PORTAL_URL,
 } = require('../lib/helpers');
 
 function getAdminKey(req) {
@@ -65,6 +67,83 @@ async function listCourseTransfers(redis, status) {
   return rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 }
 
+async function listCourseCardPurchases(redis, status = 'all') {
+  const rows = [];
+  let cursor = '0';
+  do {
+    const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'user:*', 'COUNT', 200);
+    cursor = nextCursor;
+    if (!keys.length) continue;
+
+    const pipeline = redis.pipeline();
+    keys.forEach((key) => pipeline.get(key));
+    const results = await pipeline.exec();
+
+    for (const entry of results) {
+      const user = safeParse(entry && entry[1], null);
+      if (!user || !Array.isArray(user.purchases)) continue;
+      const email = String(user.email || '').toLowerCase();
+
+      for (const purchase of user.purchases) {
+        if (!purchase || typeof purchase !== 'object') continue;
+        const isCourse = purchase.course === true || Boolean(purchase.courseId) || String(purchase.label || '').toLowerCase().includes('course');
+        if (!isCourse) continue;
+
+        const purchaseStatus = String(purchase.status || 'unknown').toLowerCase();
+        if (status !== 'all' && purchaseStatus !== status) continue;
+
+        rows.push({
+          id: purchase.txnId || `${email}:${purchase.createdAt || ''}`,
+          source: purchase.source || 'card',
+          channel: 'credit_debit',
+          email,
+          name: user.name || '',
+          label: purchase.label || 'Course Purchase',
+          courseId: purchase.courseId || DEFAULT_COURSE_ID,
+          priceId: purchase.priceId || null,
+          status: purchaseStatus,
+          amount: purchase.amount || null,
+          currency: purchase.currency || null,
+          txnId: purchase.txnId || null,
+          createdAt: purchase.createdAt || null,
+          completedAt: purchase.completedAt || null,
+        });
+      }
+    }
+  } while (cursor !== '0');
+
+  return rows.sort((a, b) => String(b.completedAt || b.createdAt || '').localeCompare(String(a.completedAt || a.createdAt || '')));
+}
+
+async function listUnifiedCoursePurchases(redis, status = 'all') {
+  const [cardPurchases, courseTransfers] = await Promise.all([
+    listCourseCardPurchases(redis, status),
+    listCourseTransfers(redis, status === 'all' ? 'all' : status),
+  ]);
+
+  const transferRows = courseTransfers.map((record) => ({
+    id: record.id,
+    source: 'bank_transfer',
+    channel: 'bank_transfer',
+    email: record.email || '',
+    name: record.name || '',
+    label: record.pack || record.courseId || 'Course Purchase',
+    courseId: record.courseId || DEFAULT_COURSE_ID,
+    priceId: null,
+    status: String(record.status || 'pending').toLowerCase(),
+    amount: record.amount || null,
+    currency: record.currency || null,
+    txnId: null,
+    createdAt: record.createdAt || null,
+    completedAt: record.approvedAt || null,
+    bankTransferId: record.id,
+    reference: record.reference || null,
+  }));
+
+  const allRows = cardPurchases.concat(transferRows);
+  return allRows.sort((a, b) => String(b.completedAt || b.createdAt || '').localeCompare(String(a.completedAt || a.createdAt || '')));
+}
+
 module.exports = async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -100,6 +179,11 @@ module.exports = async function handler(req, res) {
 
       if (type === 'transfers') {
         const items = await listCourseTransfers(redis, String(query.status || 'pending').toLowerCase());
+        return res.status(200).json({ ok: true, count: items.length, items });
+      }
+
+      if (type === 'purchases') {
+        const items = await listUnifiedCoursePurchases(redis, String(query.status || 'all').toLowerCase());
         return res.status(200).json({ ok: true, count: items.length, items });
       }
 
@@ -157,9 +241,21 @@ module.exports = async function handler(req, res) {
         course,
         createdAccount: false,
         temporaryPassword: null,
-        progressUrl: `${process.env.CUSTOMER_PORTAL_URL || 'https://map-scrapper-five.vercel.app/portal/'}?course=${encodeURIComponent(course.id)}`,
+        progressUrl: `${CUSTOMER_PORTAL_URL}?course=${encodeURIComponent(course.id)}`,
       });
       return res.status(200).json({ ok: true });
+    }
+
+    if (action === 'sendPurchaseEmail') {
+      const email = String(body.email || '').trim().toLowerCase();
+      if (!email) return res.status(400).json({ error: 'email is required.' });
+      await sendSimpleCourseLinkEmail({
+        from: body.from || null,
+        email,
+        name: body.name || '',
+        txnId: body.txnId || body.bankTransferId || body.reference || null,
+      });
+      return res.status(200).json({ ok: true, message: `Course link email sent to ${email}.` });
     }
 
     if (action === 'approveCourseTransfer') {

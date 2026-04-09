@@ -2,12 +2,18 @@
 // - return public pricing mode/config (used by web + extension)
 // POST /api/pricing-config
 // - Admin only: update pricing mode
-const { cors, getRedis } = require('../lib/helpers');
+const { cors, getRedis, PRICE_IDS, IS_PRODUCTION } = require('../lib/helpers');
 
 const PRICING_MODE_KEY = 'cfg:pricing_mode';
 const PRICING_MODE_CREDIT = 'credit_based';
 const PRICING_MODE_ONE_TIME = 'one_time';
 const VALID_MODES = new Set([PRICING_MODE_CREDIT, PRICING_MODE_ONE_TIME]);
+
+function readModeLabel(baseName, fallback) {
+  const modePrimary = IS_PRODUCTION ? `${baseName}_PRODUCTION` : `${baseName}_DEVELOPMENT`;
+  const modeAlias = IS_PRODUCTION ? `${baseName}_PROD` : `${baseName}_DEV`;
+  return String(process.env[modePrimary] || process.env[modeAlias] || process.env[baseName] || fallback).trim();
+}
 
 function getAdminKey(req) {
   const fromHeader = (req.headers['x-admin-key'] || '').toString().trim();
@@ -64,18 +70,18 @@ async function getPricingMode() {
 }
 
 function buildPublicPricing(mode) {
-  const proPrice = process.env.PRICE_PRO_LABEL || '$5';
-  const proPriceId = process.env.PRICE_PRO || 'pri_01kkwtx0kh2skzrzjbxgmgqngd';
-  const enterprisePrice = process.env.PRICE_ENTERPRISE_LABEL || '$25';
-  const enterprisePriceId = process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d';
-  const oneTimePrice = process.env.PRICE_ONE_TIME_LABEL || '$5.99';
-  const oneTimePriceId = process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9';
-  const oneTimeIntlPrice = process.env.PRICE_ONE_TIME_INTL_LABEL || '$20';
-  const oneTimeIntlPriceId = process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz';
-  const coursePrice = process.env.PRICE_COURSE_LABEL || '$10';
-  const coursePriceId = process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty';
-  const courseIntlPrice = process.env.PRICE_COURSE_INTL_LABEL || '$10';
-  const courseIntlPriceId = process.env.PRICE_COURSE_INTL_ID || coursePriceId;
+  const proPrice = readModeLabel('PRICE_PRO_LABEL', '$5');
+  const proPriceId = PRICE_IDS.pro;
+  const enterprisePrice = readModeLabel('PRICE_ENTERPRISE_LABEL', '$25');
+  const enterprisePriceId = PRICE_IDS.enterprise;
+  const oneTimePrice = readModeLabel('PRICE_ONE_TIME_LABEL', '$5.99');
+  const oneTimePriceId = PRICE_IDS.oneTimePk;
+  const oneTimeIntlPrice = readModeLabel('PRICE_ONE_TIME_INTL_LABEL', '$20');
+  const oneTimeIntlPriceId = PRICE_IDS.oneTimeIntl;
+  const coursePrice = readModeLabel('PRICE_COURSE_LABEL', '$10');
+  const coursePriceId = PRICE_IDS.course;
+  const courseIntlPrice = readModeLabel('PRICE_COURSE_INTL_LABEL', '$10');
+  const courseIntlPriceId = PRICE_IDS.courseIntl || coursePriceId;
 
   const countryCurrency = {
     Pakistan: 'PKR',

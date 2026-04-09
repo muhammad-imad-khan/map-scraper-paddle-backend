@@ -1,10 +1,10 @@
 // POST /api/course-checkout
 // Creates a Paddle transaction for course purchase in sandbox/live based on backend env.
 // Body: { email: "buyer@example.com", name?: "Buyer", priceId?: "pri_..." }
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis } = require('../lib/helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis, PRICE_IDS, DEFAULT_COURSE_ID } = require('../lib/helpers');
 
-const DEFAULT_COURSE_PRICE_ID = process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty';
-const DEFAULT_COURSE_INTL_PRICE_ID = process.env.PRICE_COURSE_INTL_ID || DEFAULT_COURSE_PRICE_ID;
+const DEFAULT_COURSE_PRICE_ID = PRICE_IDS.course;
+const DEFAULT_COURSE_INTL_PRICE_ID = PRICE_IDS.courseIntl || DEFAULT_COURSE_PRICE_ID;
 
 function resolveCoursePriceId({ requestedPriceId, country, currency }) {
   const requested = String(requestedPriceId || '').trim();
@@ -75,7 +75,7 @@ module.exports = async function handler(req, res) {
       txnId: data?.data?.id || null,
       label: 'Lead Gen x AI Web Design Course',
       course: true,
-      courseId: process.env.DEFAULT_COURSE_ID || 'lead-gen-ai-web-design',
+      courseId: DEFAULT_COURSE_ID,
     });
     await redis.set(userKey, JSON.stringify(userData));
 

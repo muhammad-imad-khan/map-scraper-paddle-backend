@@ -3,9 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('../lib/helpers');
-
-const PADDLE_ENV = (process.env.PADDLE_ENV || 'sandbox').trim().toLowerCase();
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID, PADDLE_ENV, PADDLE_WEBHOOK_SECRET } = require('../lib/helpers');
 
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
@@ -52,7 +50,7 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   // ── Signature verification (skip if secret not set — sandbox testing) ──
-  const secret = process.env.PADDLE_WEBHOOK_SECRET;
+  const secret = PADDLE_WEBHOOK_SECRET;
   const enforceSignature = Boolean(secret) && (PADDLE_ENV === 'live' || PADDLE_ENV === 'production' || process.env.WEBHOOK_STRICT_SIGNATURE === 'true');
   if (enforceSignature) {
     const sig = req.headers['paddle-signature'] || '';

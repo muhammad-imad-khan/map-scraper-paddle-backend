@@ -90,41 +90,36 @@ Your API will be at: `https://your-project.vercel.app`
 
 ---
 
-## Step 6 — Set Up Email Delivery (for license keys)
+## Step 6 — Set Up Email Delivery (SMTP)
 
-When a customer pays, your webhook generates a license key. You need to email it.
+When a customer pays, your webhook generates a license key. Use SMTP credentials to email it.
 
-**Recommended: Resend.com** (free tier: 3,000 emails/month)
-
-1. Sign up at resend.com → get API key
-2. Add to your server.js webhook handler:
+1. Configure env vars:
+   - `SMTP_HOST`
+   - `SMTP_PORT`
+   - `SMTP_USER`
+   - `SMTP_PASS`
+   - `SMTP_FROM` (optional, defaults to `SMTP_USER`)
+2. Add to your webhook handler:
 
 ```js
-// After generating licenseKey in the webhook...
-await fetch('https://api.resend.com/emails', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-    'Content-Type':  'application/json',
+const nodemailer = require('nodemailer');
+
+const transport = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: Number(process.env.SMTP_PORT) === 465,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   },
-  body: JSON.stringify({
-    from:    'Maps Lead Scraper <noreply@mapsleadscraper.com>',
-    to:      email,
-    subject: 'Your Maps Lead Scraper credits are ready 🎉',
-    html:    `
-      <h2>Thank you for your purchase!</h2>
-      <p>Your license key:</p>
-      <code style="font-size:20px;background:#f0f0f0;padding:10px 20px;border-radius:6px">
-        ${licenseKey}
-      </code>
-      <p>To activate:</p>
-      <ol>
-        <li>Open the Maps Lead Scraper extension</li>
-        <li>Click "Buy Credits" tab</li>
-        <li>Paste your key and click Activate</li>
-      </ol>
-    `,
-  }),
+});
+
+await transport.sendMail({
+  from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  to: email,
+  subject: 'Your Maps Lead Scraper credits are ready',
+  html: `<p>Hi ${name || 'there'},</p><p>Your license key: <strong>${licenseKey}</strong></p>`,
 });
 ```
 

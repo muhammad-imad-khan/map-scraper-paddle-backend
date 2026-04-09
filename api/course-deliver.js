@@ -95,14 +95,33 @@ module.exports = async function handler(req, res) {
     // ── Share Google Drive access ──
     const shareResult = await shareCourseFolderAccess({ email });
 
-    const portalResult = await grantCourseAccess({
-      email,
-      name: userName,
-      courseId: DEFAULT_COURSE_ID,
-      source: 'paddle_redirect',
-      txnId: txnId || 'direct-delivery',
-      sendEmail: true,
-    }, redis);
+    let portalResult = null;
+    let portalEmailSent = true;
+    let portalEmailError = null;
+
+    try {
+      portalResult = await grantCourseAccess({
+        email,
+        name: userName,
+        courseId: DEFAULT_COURSE_ID,
+        source: 'paddle_redirect',
+        txnId: txnId || 'direct-delivery',
+        sendEmail: true,
+      }, redis);
+    } catch (emailErr) {
+      // In sandbox/testing environments, SMTP can be unavailable. Grant portal access anyway.
+      console.error(`Portal email failed for ${email}:`, emailErr?.message || emailErr);
+      portalResult = await grantCourseAccess({
+        email,
+        name: userName,
+        courseId: DEFAULT_COURSE_ID,
+        source: 'paddle_redirect',
+        txnId: txnId || 'direct-delivery',
+        sendEmail: false,
+      }, redis);
+      portalEmailSent = false;
+      portalEmailError = emailErr?.message || 'portal_email_failed';
+    }
 
     // ── Mark as delivered (expires in 30 days) ──
     await redis.set(dedupKey, JSON.stringify({
@@ -122,6 +141,8 @@ module.exports = async function handler(req, res) {
       driveError: shareResult?.ok ? null : (shareResult?.reason || 'unknown'),
       txnVerified,
       portalAccessGranted: Boolean(portalResult?.enrollment),
+      portalEmailSent,
+      portalEmailError,
     });
   } catch (err) {
     console.error('Course deliver error:', err);
