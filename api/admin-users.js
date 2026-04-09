@@ -9,7 +9,7 @@
 // Auth:
 //   X-Admin-Key: <ADMIN_API_KEY>
 //   or Authorization: Bearer <ADMIN_API_KEY>
-const { cors, getRedis, keys, isValidInstallId, sendPurchaseNotification } = require('../lib/helpers');
+const { cors, getRedis, keys, isValidInstallId, sendPurchaseNotification, addCredits, deliverToolPurchase, markInstallUnlimited, sendZipDeliveryEmail, PRICE_CREDITS } = require('../lib/helpers');
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -494,7 +494,7 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true, count: items.length, items });
     }
 
-    // ── Approve bank transfer (add credits to install) ──
+    // ── Approve bank transfer (add credits/lifetime + deliver tool to user) ──
     if (action === 'approveBankTransfer') {
       const btId = (body.btId || '').toString().trim();
       const credits = Number(body.credits);
@@ -511,11 +511,83 @@ module.exports = async function handler(req, res) {
       bt.approvedBy = 'admin';
       bt.creditsGranted = credits || 0;
 
-      // Add credits if installId and credits provided
-      if (installId && isValidInstallId(installId) && credits > 0) {
-        const { addCredits } = require('../lib/helpers');
-        await addCredits(installId, credits, `banktransfer:${btId}`);
-        bt.installId = installId;
+      const effectiveInstallId = installId || bt.installId || '';
+      const userEmail = (bt.email || '').trim().toLowerCase();
+      const userName = (bt.name || '').trim();
+      const packKey = (bt.pack || '').toString().toLowerCase();
+      const isLifetime = packKey === 'lifetime' || packKey.includes('lifetime');
+
+      // ── Lifetime pack: grant unlimited entitlement + send tool email ──
+      if (isLifetime && userEmail) {
+        const deliveryResult = await deliverToolPurchase({
+          redis,
+          email: userEmail,
+          name: userName,
+          installId: effectiveInstallId,
+          txnId: `banktransfer:${btId}`,
+          forceResend: false,
+          priceId: null,
+          amount: bt.amount || null,
+          currency: bt.currency || null,
+          source: 'bank_transfer',
+          purchase: {
+            unlimited: true,
+            label: 'Lifetime License (Bank Transfer)',
+            credits: 0,
+          },
+        });
+
+        bt.deliveryResult = {
+          ok: deliveryResult.ok,
+          entitlementGranted: deliveryResult.entitlementGranted || false,
+          zipEmailSent: deliveryResult.zipEmailSent || false,
+          reason: deliveryResult.reason || deliveryResult.error || null,
+        };
+
+        if (effectiveInstallId && isValidInstallId(effectiveInstallId)) {
+          bt.installId = effectiveInstallId;
+          await markInstallUnlimited(effectiveInstallId, { redis, email: userEmail, name: userName });
+        }
+      } else {
+        // ── Credit pack: add credits + send tool email ──
+        if (effectiveInstallId && isValidInstallId(effectiveInstallId) && credits > 0) {
+          await addCredits(effectiveInstallId, credits, `banktransfer:${btId}`);
+          bt.installId = effectiveInstallId;
+        }
+
+        // Record purchase on user profile
+        if (userEmail) {
+          const userKey = `user:${userEmail}`;
+          const userRaw = await redis.get(userKey);
+          const userData = userRaw ? safeParse(userRaw) || {} : {};
+          if (!userData.purchases) userData.purchases = [];
+          userData.email = userData.email || userEmail;
+          if (userName && !userData.name) userData.name = userName;
+          userData.purchases.push({
+            priceId: null,
+            installId: effectiveInstallId || null,
+            status: 'completed',
+            label: bt.pack || 'Credit Pack (Bank Transfer)',
+            credits: credits || 0,
+            txnId: `banktransfer:${btId}`,
+            amount: bt.amount || null,
+            currency: bt.currency || null,
+            createdAt: bt.createdAt || new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            source: 'bank_transfer',
+          });
+          await redis.set(userKey, JSON.stringify(userData));
+        }
+
+        // Send tool delivery email for credit packs too
+        if (userEmail) {
+          try {
+            const emailResult = await sendZipDeliveryEmail({ email: userEmail, name: userName, txnId: `banktransfer:${btId}` });
+            bt.deliveryResult = { ok: emailResult.ok, zipEmailSent: emailResult.ok, reason: emailResult.reason || null };
+          } catch (err) {
+            bt.deliveryResult = { ok: false, zipEmailSent: false, reason: err.message };
+          }
+        }
       }
 
       await redis.set(`banktransfer:${btId}`, JSON.stringify(bt));

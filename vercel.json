@@ -15,7 +15,7 @@
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Accept, X-Install-Id, X-Admin-Key, Authorization" }
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Accept, X-Install-Id, X-Client-Id, X-Admin-Key, Authorization" }
       ]
     }
   ]
