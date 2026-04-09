@@ -93,12 +93,12 @@ module.exports = async function handler(req, res) {
             </div>
           </div>
           <div style="background:#f8fafc;padding:14px 24px;font-size:12px;color:#94a3b8;text-align:center;">
-            Map Lead Scraper &mdash; Bank Transfer Request
+            Lead Gen X Map Scrapper &mdash; Bank Transfer Request
           </div>
         </div>
       `;
       transport.sendMail({
-        from: `"Map Lead Scraper" <${process.env.SMTP_USER}>`,
+        from: `"Lead Gen X Map Scrapper" <${process.env.SMTP_USER}>`,
         to: ADMIN_EMAIL,
         subject: `Bank Transfer Request: ${record.pack} by ${record.email}`,
         html,

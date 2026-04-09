@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID, PADDLE_ENV, PADDLE_WEBHOOK_SECRET } = require('../lib/helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, deliverCoursePurchase, BASE_URL, PADDLE_API_KEY, PADDLE_ENV, PADDLE_WEBHOOK_SECRET } = require('../lib/helpers');
 
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
@@ -216,17 +216,19 @@ module.exports = async function handler(req, res) {
       }
 
       if (isCoursePurchase) {
-        shareCourseFolderAccess({ email: userEmail }).catch(() => ({}));
-        grantCourseAccess({
+        const courseDelivery = await deliverCoursePurchase({
+          redis,
           email: userEmail,
           name: userData.name,
-          courseId: DEFAULT_COURSE_ID,
           source: 'paddle_webhook',
           txnId,
           amount: txnData?.details?.totals?.total || null,
           currency: txnData?.currency_code || null,
-          sendEmail: true,
-        }).catch(() => {}); // fire-and-forget, don't block webhook response
+        });
+
+        if (!courseDelivery.ok && !courseDelivery.alreadySent) {
+          console.error(`Course delivery email failed for ${userEmail} (txn: ${txnId}): ${courseDelivery.error || 'unknown_error'}`);
+        }
       }
     }
 

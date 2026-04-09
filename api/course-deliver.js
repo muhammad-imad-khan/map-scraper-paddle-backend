@@ -3,7 +3,7 @@
 // Verifies the transaction via Paddle API, then sends course email directly.
 // Body: { email: "buyer@example.com", txnId?: "txn_..." }
 // This bypasses webhook entirely — reliable in sandbox and production.
-const { cors, getRedis, shareCourseFolderAccess, BASE_URL, PADDLE_API_KEY, grantCourseAccess, DEFAULT_COURSE_ID } = require('../lib/helpers');
+const { cors, getRedis, deliverCoursePurchase, BASE_URL, PADDLE_API_KEY } = require('../lib/helpers');
 
 function sanitize(str, maxLen = 120) {
   return String(str || '').trim().slice(0, maxLen);
@@ -11,6 +11,10 @@ function sanitize(str, maxLen = 120) {
 
 function isValidEmail(email) {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
+}
+
+function isTruthy(value) {
+  return value === true || value === 1 || value === '1' || value === 'true' || value === 'yes';
 }
 
 async function verifyTransaction(txnId) {
@@ -39,6 +43,7 @@ module.exports = async function handler(req, res) {
   const email = sanitize(req.body?.email, 254).toLowerCase();
   const name = sanitize(req.body?.name, 100);
   const txnId = sanitize(req.body?.txnId, 64);
+  const forceResend = isTruthy(req.body?.forceResend);
 
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Valid email is required.' });
@@ -46,13 +51,6 @@ module.exports = async function handler(req, res) {
 
   try {
     const redis = getRedis();
-
-    // ── Dedup: don't send course email twice for same email ──
-    const dedupKey = `course-delivered:${email}`;
-    const alreadySent = await redis.get(dedupKey);
-    if (alreadySent) {
-      return res.status(200).json({ ok: true, alreadySent: true, message: 'Course email was already sent to this address.' });
-    }
 
     // ── Optional: verify transaction with Paddle ──
     let txnVerified = false;
@@ -92,57 +90,37 @@ module.exports = async function handler(req, res) {
       return res.status(403).json({ error: 'Could not verify course purchase.' });
     }
 
-    // ── Share Google Drive access ──
-    const shareResult = await shareCourseFolderAccess({ email });
+    const deliveryResult = await deliverCoursePurchase({
+      redis,
+      email,
+      name: userName,
+      txnId: txnId || null,
+      forceResend,
+      source: 'paddle_redirect',
+    });
 
-    let portalResult = null;
-    let portalEmailSent = true;
-    let portalEmailError = null;
-
-    try {
-      portalResult = await grantCourseAccess({
-        email,
-        name: userName,
-        courseId: DEFAULT_COURSE_ID,
-        source: 'paddle_redirect',
-        txnId: txnId || 'direct-delivery',
-        sendEmail: true,
-      }, redis);
-    } catch (emailErr) {
-      // In sandbox/testing environments, SMTP can be unavailable. Grant portal access anyway.
-      console.error(`Portal email failed for ${email}:`, emailErr?.message || emailErr);
-      portalResult = await grantCourseAccess({
-        email,
-        name: userName,
-        courseId: DEFAULT_COURSE_ID,
-        source: 'paddle_redirect',
-        txnId: txnId || 'direct-delivery',
-        sendEmail: false,
-      }, redis);
-      portalEmailSent = false;
-      portalEmailError = emailErr?.message || 'portal_email_failed';
+    if (!deliveryResult.ok && !deliveryResult.alreadySent) {
+      return res.status(502).json({
+        error: 'Failed to send course email. Please contact support if this continues.',
+        driveShared: deliveryResult.driveShared,
+        driveError: deliveryResult.driveError,
+        detail: deliveryResult.error || 'email_send_failed',
+        txnVerified,
+      });
     }
 
-    // ── Mark as delivered (expires in 30 days) ──
-    await redis.set(dedupKey, JSON.stringify({
-      email,
-      txnId,
-      sharedDrive: shareResult?.ok || false,
-      portalAccessGranted: Boolean(portalResult?.enrollment),
-      deliveredAt: new Date().toISOString(),
-    }), 'EX', 60 * 60 * 24 * 30);
-
-    console.log(`Course delivered to ${email} (txn: ${txnId || 'N/A'}, drive: ${shareResult?.ok || false})`);
+    console.log(`Course delivered to ${email} (txn: ${txnId || 'N/A'}, drive: ${deliveryResult.driveShared || false})`);
 
     return res.status(200).json({
       ok: true,
       email,
-      driveShared: shareResult?.ok || false,
-      driveError: shareResult?.ok ? null : (shareResult?.reason || 'unknown'),
+      alreadySent: deliveryResult.alreadySent || false,
+      resent: deliveryResult.resent || false,
+      deliveryProvider: deliveryResult.provider || null,
+      driveShared: deliveryResult.driveShared || false,
+      driveError: deliveryResult.driveError,
       txnVerified,
-      portalAccessGranted: Boolean(portalResult?.enrollment),
-      portalEmailSent,
-      portalEmailError,
+      portalAccessGranted: deliveryResult.portalAccessGranted || false,
     });
   } catch (err) {
     console.error('Course deliver error:', err);
