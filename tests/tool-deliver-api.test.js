@@ -1,0 +1,203 @@
+const mockRedis = {
+  get: jest.fn().mockResolvedValue(null),
+  set: jest.fn().mockResolvedValue('OK'),
+  connect: jest.fn().mockResolvedValue(),
+};
+
+const mockDeliverToolPurchase = jest.fn();
+
+jest.mock('ioredis', () => jest.fn(() => mockRedis));
+jest.mock('../lib/helpers', () => ({
+  cors: jest.fn(),
+  getRedis: jest.fn(() => mockRedis),
+  deliverToolPurchase: (...args) => mockDeliverToolPurchase(...args),
+  BASE_URL: 'https://sandbox-api.paddle.com',
+  PADDLE_API_KEY: '',
+  PRICE_CREDITS: {
+    pri_test_tool: { credits: 0, label: 'Lifetime License', unlimited: true },
+  },
+  safeParse: (value, fallback = null) => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  },
+}));
+
+function createRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: null,
+    setHeader(name, value) {
+      this.headers[name] = value;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    end() {
+      return this;
+    },
+  };
+}
+
+describe('tool-deliver API', () => {
+  let handler;
+
+  beforeAll(() => {
+    handler = require('../api/tool-deliver');
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockRedis.get.mockImplementation(async (key) => {
+      if (key === 'session:test_token') {
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          clientId: 'client_1234567890abcd',
+          fingerprint: 'fp_test',
+        });
+      }
+      if (key === 'user:buyer@example.com') {
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          name: 'Buyer',
+          purchases: [{
+            txnId: 'txn_test_tool',
+            priceId: 'pri_test_tool',
+            installId: 'install_test_1234',
+            status: 'pending',
+          }],
+        });
+      }
+      return null;
+    });
+  });
+
+  test('returns success when entitlement is granted but zip email fails', async () => {
+    mockDeliverToolPurchase.mockResolvedValue({
+      ok: false,
+      entitlementGranted: true,
+      zipEmailSent: false,
+      error: 'smtp_send_failed',
+    });
+
+    const req = {
+      method: 'POST',
+      headers: {
+        'user-agent': 'jest',
+        'accept-language': 'en-US',
+        'sec-ch-ua': '',
+        'sec-ch-ua-platform': '',
+      },
+      body: {
+        token: 'test_token',
+        clientId: 'client_1234567890abcd',
+        txnId: 'txn_test_tool',
+        installId: 'install_test_1234',
+      },
+    };
+    const crypto = require('crypto');
+    req.headers['sec-ch-ua'] = '';
+    req.headers['sec-ch-ua-platform'] = '';
+    mockRedis.get.mockImplementation(async (key) => {
+      if (key === 'session:test_token') {
+        const raw = `${req.headers['user-agent']}|${req.headers['accept-language']}|${req.headers['sec-ch-ua']}|${req.headers['sec-ch-ua-platform']}`;
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          clientId: 'client_1234567890abcd',
+          fingerprint: crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32),
+        });
+      }
+      if (key === 'user:buyer@example.com') {
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          name: 'Buyer',
+          purchases: [{
+            txnId: 'txn_test_tool',
+            priceId: 'pri_test_tool',
+            installId: 'install_test_1234',
+            status: 'pending',
+          }],
+        });
+      }
+      return null;
+    });
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.entitlementGranted).toBe(true);
+    expect(res.body.zipEmailSent).toBe(false);
+    expect(res.body.detail).toBe('smtp_send_failed');
+  });
+
+  test('returns success when tool purchase is finalized and zip email is sent', async () => {
+    mockDeliverToolPurchase.mockResolvedValue({
+      ok: true,
+      entitlementGranted: true,
+      zipEmailSent: true,
+      provider: 'smtp',
+      txnId: 'txn_test_tool',
+    });
+
+    const req = {
+      method: 'POST',
+      headers: {
+        'user-agent': 'jest',
+        'accept-language': 'en-US',
+        'sec-ch-ua': '',
+        'sec-ch-ua-platform': '',
+      },
+      body: {
+        token: 'test_token',
+        clientId: 'client_1234567890abcd',
+        txnId: 'txn_test_tool',
+        installId: 'install_test_1234',
+      },
+    };
+    const crypto = require('crypto');
+    req.headers['sec-ch-ua'] = '';
+    req.headers['sec-ch-ua-platform'] = '';
+    mockRedis.get.mockImplementation(async (key) => {
+      if (key === 'session:test_token') {
+        const raw = `${req.headers['user-agent']}|${req.headers['accept-language']}|${req.headers['sec-ch-ua']}|${req.headers['sec-ch-ua-platform']}`;
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          clientId: 'client_1234567890abcd',
+          fingerprint: crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32),
+        });
+      }
+      if (key === 'user:buyer@example.com') {
+        return JSON.stringify({
+          email: 'buyer@example.com',
+          name: 'Buyer',
+          purchases: [{
+            txnId: 'txn_test_tool',
+            priceId: 'pri_test_tool',
+            installId: 'install_test_1234',
+            status: 'pending',
+          }],
+        });
+      }
+      return null;
+    });
+    const res = createRes();
+
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.entitlementGranted).toBe(true);
+    expect(res.body.zipEmailSent).toBe(true);
+    expect(res.body.deliveryProvider).toBe('smtp');
+  });
+});
