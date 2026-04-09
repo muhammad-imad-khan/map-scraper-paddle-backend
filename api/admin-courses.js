@@ -105,6 +105,10 @@ async function listCourseCardPurchases(redis, status = 'all') {
           amount: purchase.amount || null,
           currency: purchase.currency || null,
           txnId: purchase.txnId || null,
+          reference: purchase.txnId || null,
+          receiptDataUrl: null,
+          receiptName: null,
+          receiptMimeType: null,
           createdAt: purchase.createdAt || null,
           completedAt: purchase.completedAt || null,
         });
@@ -138,6 +142,9 @@ async function listUnifiedCoursePurchases(redis, status = 'all') {
     completedAt: record.approvedAt || null,
     bankTransferId: record.id,
     reference: record.reference || null,
+    receiptDataUrl: record.receiptDataUrl || null,
+    receiptName: record.receiptName || null,
+    receiptMimeType: record.receiptMimeType || null,
   }));
 
   const allRows = cardPurchases.concat(transferRows);
@@ -253,9 +260,156 @@ module.exports = async function handler(req, res) {
         from: body.from || null,
         email,
         name: body.name || '',
-        txnId: body.txnId || body.bankTransferId || body.reference || null,
       });
       return res.status(200).json({ ok: true, message: `Course link email sent to ${email}.` });
+    }
+
+    if (action === 'validatePurchase') {
+      const email = String(body.email || '').trim().toLowerCase();
+      if (!email) return res.status(400).json({ error: 'email is required.' });
+
+      const source = String(body.source || '').toLowerCase();
+      const courseId = body.courseId || DEFAULT_COURSE_ID;
+      const now = new Date().toISOString();
+      let transfer = null;
+
+      const userKey = `user:${email}`;
+      const userRaw = await redis.get(userKey);
+      const userData = safeParse(userRaw, null);
+      if (userData && Array.isArray(userData.purchases)) {
+        const purchase = userData.purchases.find((entry) => {
+          if (!entry || typeof entry !== 'object') return false;
+          const entryTxn = String(entry.txnId || '').trim();
+          const bodyTxn = String(body.txnId || '').trim();
+          return bodyTxn && entryTxn && entryTxn === bodyTxn;
+        });
+        if (purchase) {
+          purchase.adminValidatedAt = now;
+          purchase.adminValidatedBy = 'admin';
+          purchase.status = purchase.status === 'pending' ? 'completed' : purchase.status;
+          await redis.set(userKey, JSON.stringify(userData));
+        }
+      }
+
+      if (source === 'bank_transfer' && body.bankTransferId) {
+        const btId = String(body.bankTransferId || '').trim();
+        const raw = await redis.get(`banktransfer:${btId}`);
+        transfer = safeParse(raw, null);
+        if (!transfer || transfer.purchaseType !== 'course') {
+          return res.status(404).json({ error: 'Course transfer not found.' });
+        }
+      }
+
+      const result = await grantCourseAccess({
+        email,
+        name: body.name || transfer?.name || '',
+        courseId,
+        source: source || (transfer ? 'bank_transfer' : 'admin_validation'),
+        txnId: body.txnId || null,
+        bankTransferId: transfer?.id || body.bankTransferId || null,
+        amount: body.amount || transfer?.amount || null,
+        currency: body.currency || transfer?.currency || null,
+        sendEmail: true,
+        forceEmail: true,
+      }, redis);
+
+      await sendSimpleCourseLinkEmail({
+        from: body.from || null,
+        email,
+        name: body.name || transfer?.name || '',
+      });
+
+      if (transfer && String(transfer.status || '').toLowerCase() !== 'approved') {
+        transfer.status = 'approved';
+        transfer.approvedAt = now;
+        transfer.approvedBy = 'admin';
+        transfer.adminValidatedAt = now;
+        transfer.adminValidatedBy = 'admin';
+        transfer.courseId = courseId;
+        transfer.courseAccessGranted = true;
+        await redis.set(`banktransfer:${transfer.id}`, JSON.stringify(transfer));
+        await redis.lrem('banktransfers:pending', 0, transfer.id);
+        await redis.lrem('banktransfers:rejected', 0, transfer.id);
+        await redis.lpush('banktransfers:approved', transfer.id);
+      }
+
+      // Log validation event for monitoring
+      const logEntry = {
+        email,
+        courseId,
+        source,
+        txnId: body.txnId || null,
+        bankTransferId: body.bankTransferId || null,
+        status: 'success',
+        timestamp: now,
+        adminUser: body.adminUser || 'auto',
+      };
+      const logKey = `validation:log:${new Date().toISOString().split('T')[0]}`;
+      try {
+        const logList = await redis.get(logKey);
+        let logs = [];
+        if (logList) {
+          const parsed = safeParse(logList, null);
+          logs = Array.isArray(parsed) ? parsed : [];
+        }
+        logs.push(logEntry);
+        await redis.set(logKey, JSON.stringify(logs.slice(-500))); // Keep last 500 validations
+        await redis.expire(logKey, 30 * 24 * 60 * 60); // 30 days
+      } catch (logErr) {
+        // Log error but don't fail validation
+        console.error('Validation log error:', logErr.message);
+      }
+
+      return res.status(200).json({
+        ok: true,
+        message: `Purchase validated. Course email + portal notification sent to ${email}.`,
+        transfer: transfer || null,
+        result,
+      });
+    }
+
+    if (action === 'validation-logs') {
+      // Retrieve validation logs for monitoring/metrics
+      const days = parseInt(body.days || '7', 10);
+      const logs = [];
+      const now = new Date();
+      
+      for (let i = 0; i < days; i++) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        const logKey = `validation:log:${dateStr}`;
+        const raw = await redis.get(logKey);
+        const dayLogs = safeParse(raw, null) || [];
+        if (Array.isArray(dayLogs)) {
+          logs.push(...dayLogs);
+        }
+      }
+
+      const stats = {
+        totalValidations: logs.length,
+        bySource: {},
+        byStatus: {},
+        byDate: {},
+        recentErrors: [],
+      };
+
+      logs.forEach((log) => {
+        if (!log || typeof log !== 'object') return;
+        stats.bySource[log.source] = (stats.bySource[log.source] || 0) + 1;
+        stats.byStatus[log.status] = (stats.byStatus[log.status] || 0) + 1;
+        const dateStr = log.timestamp?.split('T')[0] || 'unknown';
+        stats.byDate[dateStr] = (stats.byDate[dateStr] || 0) + 1;
+        if (log.status !== 'success') {
+          stats.recentErrors.push(log);
+        }
+      });
+
+      return res.status(200).json({
+        ok: true,
+        stats,
+        logs: logs.slice(-50), // Return most recent 50
+      });
     }
 
     if (action === 'approveCourseTransfer') {
