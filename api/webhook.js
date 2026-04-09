@@ -94,6 +94,7 @@ module.exports = async function handler(req, res) {
     let matchedPurchase = false;
     let matchedPriceId = null;
     let grantsUnlimited = false;
+    const purchaseKind = String(txnData?.custom_data?.purchaseKind || '').toLowerCase();
     let isCoursePurchase = txnData?.custom_data?.coursePurchase === true || txnData?.custom_data?.coursePurchase === 'true';
 
     for (const item of items) {
@@ -107,6 +108,15 @@ module.exports = async function handler(req, res) {
         grantsUnlimited = grantsUnlimited || match.unlimited === true;
         isCoursePurchase = isCoursePurchase || match.course === true;
       }
+    }
+
+    if (!matchedPurchase && purchaseKind === 'lifetime') {
+      matchedPurchase = true;
+      matchedPriceId = items[0]?.price?.id || null;
+      label = 'Lifetime License';
+      grantsUnlimited = true;
+      totalCredits = 0;
+      isCoursePurchase = false;
     }
 
     if (!matchedPurchase && isCoursePurchase) {

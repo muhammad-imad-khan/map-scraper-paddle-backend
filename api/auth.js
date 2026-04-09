@@ -36,6 +36,7 @@ function getLifetimePriceIds() {
   return new Set([
     process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9',
     process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz',
+    process.env.PRICE_CHECKOUT_FALLBACK_ID || '',
   ]);
 }
 
