@@ -2,7 +2,7 @@
 // Actions: register, login, me, logout
 // Stores users in Redis with PBKDF2 password hashing
 const crypto = require('crypto');
-const { cors, getRedis } = require('../lib/helpers');
+const { cors, getRedis, PRICE_IDS } = require('../lib/helpers');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -32,11 +32,62 @@ function sanitize(str, maxLen = 100) {
   return String(str || '').trim().slice(0, maxLen);
 }
 
+function normalizeClientId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (!/^[a-zA-Z0-9_-]{16,120}$/.test(normalized)) return '';
+  return normalized;
+}
+
+function readClientId(req) {
+  return normalizeClientId(req?.body?.clientId || req?.headers?.['x-client-id']);
+}
+
+function buildSessionFingerprint(req) {
+  const userAgent = String(req?.headers?.['user-agent'] || '').trim();
+  const language = String(req?.headers?.['accept-language'] || '').trim();
+  const secChUa = String(req?.headers?.['sec-ch-ua'] || '').trim();
+  const secChPlatform = String(req?.headers?.['sec-ch-ua-platform'] || '').trim();
+  const raw = `${userAgent}|${language}|${secChUa}|${secChPlatform}`;
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
+}
+
+async function createSession(redis, token, payload) {
+  await redis.set(authKeys.session(token), JSON.stringify(payload), 'EX', SESSION_TTL);
+}
+
+async function validateSession(redis, req, token, clientId, { touch = false } = {}) {
+  const raw = await redis.get(authKeys.session(token));
+  if (!raw) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  const session = JSON.parse(raw);
+  if (!session || !session.email) return { ok: false, error: 'Session invalid. Please log in again.' };
+
+  if (session.clientId) {
+    if (!clientId) return { ok: false, error: 'Session verification failed. Please log in again.' };
+    if (session.clientId !== clientId) return { ok: false, error: 'Session is bound to a different browser. Please log in on this device.' };
+  }
+
+  if (session.fingerprint) {
+    const currentFingerprint = buildSessionFingerprint(req);
+    if (session.fingerprint !== currentFingerprint) {
+      return { ok: false, error: 'Session verification failed. Please log in again.' };
+    }
+  }
+
+  if (touch) {
+    session.lastSeenAt = new Date().toISOString();
+    await createSession(redis, token, session);
+  }
+
+  return { ok: true, session };
+}
+
 function getLifetimePriceIds() {
   return new Set([
-    process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9',
-    process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz',
-    process.env.PRICE_CHECKOUT_FALLBACK_ID || '',
+    PRICE_IDS.oneTimePk,
+    PRICE_IDS.oneTimeIntl,
+    PRICE_IDS.checkoutFallback,
   ]);
 }
 
@@ -55,6 +106,7 @@ module.exports = async function handler(req, res) {
       const email = sanitize(req.body.email, 254).toLowerCase();
       const password = req.body.password || '';
       const name = sanitize(req.body.name, 100);
+      const clientId = readClientId(req);
 
       if (!isValidEmail(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
       if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
@@ -78,15 +130,23 @@ module.exports = async function handler(req, res) {
       };
 
       await redis.set(userKey, JSON.stringify(userData));
-      await redis.set(authKeys.session(token), JSON.stringify({ email, name }), 'EX', SESSION_TTL);
+      await createSession(redis, token, {
+        email,
+        name,
+        clientId,
+        fingerprint: buildSessionFingerprint(req),
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+      });
 
-      return res.status(201).json({ ok: true, token, user: { name, email } });
+      return res.status(201).json({ ok: true, token, clientId, user: { name, email } });
     }
 
     // ── LOGIN ──
     if (action === 'login') {
       const email = sanitize(req.body.email, 254).toLowerCase();
       const password = req.body.password || '';
+      const clientId = readClientId(req);
 
       if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
 
@@ -99,20 +159,28 @@ module.exports = async function handler(req, res) {
       if (hash !== userData.passwordHash) return res.status(401).json({ error: 'Invalid email or password.' });
 
       const token = generateToken();
-      await redis.set(authKeys.session(token), JSON.stringify({ email: userData.email, name: userData.name }), 'EX', SESSION_TTL);
+      await createSession(redis, token, {
+        email: userData.email,
+        name: userData.name,
+        clientId,
+        fingerprint: buildSessionFingerprint(req),
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+      });
 
-      return res.status(200).json({ ok: true, token, user: { name: userData.name, email: userData.email } });
+      return res.status(200).json({ ok: true, token, clientId, user: { name: userData.name, email: userData.email } });
     }
 
     // ── ME (validate token) ──
     if (action === 'me') {
       const token = sanitize(req.body.token, 64);
+      const clientId = readClientId(req);
       if (!token) return res.status(401).json({ error: 'No token provided.' });
 
-      const raw = await redis.get(authKeys.session(token));
-      if (!raw) return res.status(401).json({ error: 'Session expired. Please log in again.' });
+      const validation = await validateSession(redis, req, token, clientId, { touch: true });
+      if (!validation.ok) return res.status(401).json({ error: validation.error });
 
-      const session = JSON.parse(raw);
+      const session = validation.session;
       const userRaw = await redis.get(authKeys.user(session.email));
       const userData = userRaw ? JSON.parse(userRaw) : null;
       const purchases = Array.isArray(userData?.purchases) ? userData.purchases : [];
@@ -142,7 +210,15 @@ module.exports = async function handler(req, res) {
     // ── LOGOUT ──
     if (action === 'logout') {
       const token = sanitize(req.body.token, 64);
-      if (token) await redis.del(authKeys.session(token));
+      const clientId = readClientId(req);
+      if (token) {
+        const validation = await validateSession(redis, req, token, clientId);
+        if (validation.ok) {
+          await redis.del(authKeys.session(token));
+        } else {
+          return res.status(401).json({ error: validation.error });
+        }
+      }
       return res.status(200).json({ ok: true });
     }
 

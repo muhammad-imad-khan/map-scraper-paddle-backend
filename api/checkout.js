@@ -2,14 +2,15 @@
 // Creates a Paddle transaction and returns the checkout URL.
 // Body: { priceId: "pri_...", installId: "uuid", token: "auth_token" }
 // Requires auth. Links payment to user email via custom_data.
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis } = require('../lib/helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis, FRONTEND_URL, PRICE_IDS } = require('../lib/helpers');
+const crypto = require('crypto');
 
 const PRICE_MAP = {
-  pro: process.env.PRICE_PRO || 'pri_01kkwtx0kh2skzrzjbxgmgqngd',
-  enterprise: process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d',
-  lifetimePk: process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9',
-  lifetimeIntl: process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz',
-  fallback: process.env.PRICE_CHECKOUT_FALLBACK_ID || process.env.PRICE_COURSE_ID || '',
+  pro: PRICE_IDS.pro,
+  enterprise: PRICE_IDS.enterprise,
+  lifetimePk: PRICE_IDS.oneTimePk,
+  lifetimeIntl: PRICE_IDS.oneTimeIntl,
+  fallback: PRICE_IDS.checkoutFallback,
 };
 
 function resolvePriceIds({ priceId, pack, country, currency }) {
@@ -49,9 +50,20 @@ function resolvePriceIds({ priceId, pack, country, currency }) {
   return deduped;
 }
 
-function isPriceIdNotFoundError(data) {
-  const detail = String(data?.error?.detail || '').toLowerCase();
-  return detail.includes('price_ids could not be found') || detail.includes('price ids could not be found');
+function normalizeClientId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (!/^[a-zA-Z0-9_-]{16,120}$/.test(normalized)) return '';
+  return normalized;
+}
+
+function buildSessionFingerprint(req) {
+  const userAgent = String(req?.headers?.['user-agent'] || '').trim();
+  const language = String(req?.headers?.['accept-language'] || '').trim();
+  const secChUa = String(req?.headers?.['sec-ch-ua'] || '').trim();
+  const secChPlatform = String(req?.headers?.['sec-ch-ua-platform'] || '').trim();
+  const raw = `${userAgent}|${language}|${secChUa}|${secChPlatform}`;
+  return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32);
 }
 
 module.exports = async function handler(req, res) {
@@ -63,18 +75,30 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'PADDLE_API_KEY not configured' });
   }
 
-  const { priceId, installId, token, pack, country, currency } = req.body || {};
+  const { priceId, installId, token, clientId: rawClientId, pack, country, currency } = req.body || {};
 
   // ── Verify auth token ──
   if (!token || typeof token !== 'string') {
     return res.status(401).json({ error: 'Please sign in to complete your purchase.' });
   }
+  const clientId = normalizeClientId(rawClientId || req.headers['x-client-id']);
   const redis = getRedis();
   const sessionRaw = await redis.get(`session:${token}`);
   if (!sessionRaw) {
     return res.status(401).json({ error: 'Session expired. Please sign in again.' });
   }
   const session = JSON.parse(sessionRaw);
+  if (session?.clientId) {
+    if (!clientId || clientId !== session.clientId) {
+      return res.status(401).json({ error: 'Session is bound to a different browser. Please sign in again.' });
+    }
+  }
+  if (session?.fingerprint) {
+    const fingerprint = buildSessionFingerprint(req);
+    if (fingerprint !== session.fingerprint) {
+      return res.status(401).json({ error: 'Session verification failed. Please sign in again.' });
+    }
+  }
   const userEmail = session.email;
 
   const resolvedPriceIds = resolvePriceIds({ priceId, pack, country, currency });
@@ -94,10 +118,12 @@ module.exports = async function handler(req, res) {
   try {
     // Try candidate price IDs in order to avoid hard failures when one regional price is misconfigured.
     let data = null;
+    let lastAttempt = null;
     let resolvedPriceId = null;
     for (const candidatePriceId of resolvedPriceIds) {
       const attempt = await paddleRequest('/transactions', {
         items: [{ price_id: candidatePriceId, quantity: 1 }],
+          checkout: { url: `${FRONTEND_URL}/payment/` },
         custom_data: {
           installId,
           email: userEmail,
@@ -113,16 +139,13 @@ module.exports = async function handler(req, res) {
         break;
       }
 
-      if (!isPriceIdNotFoundError(attempt)) {
-        data = attempt;
-        break;
-      }
+      lastAttempt = attempt;
     }
 
     if (!data) {
       return res.status(502).json({
         error: 'Could not create checkout',
-        detail: 'No configured Paddle price IDs worked for this selection.',
+        detail: lastAttempt?.error?.detail || lastAttempt?.error?.type || 'No configured Paddle price IDs worked for this selection.',
         triedPriceIds: resolvedPriceIds,
         paddleEnv: PADDLE_ENV,
       });
@@ -150,7 +173,7 @@ module.exports = async function handler(req, res) {
 
     if (data?.data?.id) {
       const txnId = data.data.id;
-      const checkoutDomain = (process.env.PADDLE_ENV === 'live' || process.env.PADDLE_ENV === 'production')
+      const checkoutDomain = (PADDLE_ENV === 'live' || PADDLE_ENV === 'production')
         ? 'https://checkout.paddle.com'
         : 'https://sandbox-checkout.paddle.com';
       return res.status(200).json({ checkoutUrl: `${checkoutDomain}/transaction/${txnId}`, txnId });
