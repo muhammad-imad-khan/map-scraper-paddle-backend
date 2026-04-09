@@ -218,7 +218,7 @@ module.exports = async function handler(req, res) {
             zipDownload: true,
           },
           detail: deliveryResult.error || deliveryResult.reason || 'tool_email_failed',
-          warning: 'Payment was confirmed and download is unlocked, but the ZIP email could not be sent.',
+          warning: 'Payment was confirmed, but the tool access email could not be sent.',
         });
       }
 

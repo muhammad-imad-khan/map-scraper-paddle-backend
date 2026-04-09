@@ -4,7 +4,7 @@
 //
 // Security: installId is a UUID generated client-side on first install.
 // All credit mutations happen server-side with atomic Redis operations.
-const { cors, isValidInstallId, getCredits, initUser, deductCredits, sendInstallNotification, sendLowCreditsEmail, getRedis, keys, LOW_CREDITS_THRESHOLD } = require('../lib/helpers');
+const { cors, isValidInstallId, getCredits, initUser, deductCredits, sendInstallNotification, sendLowCreditsEmail, getRedis, keys, LOW_CREDITS_THRESHOLD, getInstallEntitlement, safeParse } = require('../lib/helpers');
 
 module.exports = async function handler(req, res) {
   cors(res);
@@ -19,6 +19,7 @@ module.exports = async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const result = await initUser(installId);
+      const entitlement = await getInstallEntitlement(installId);
       if (result.isNew) {
         sendInstallNotification({ installId }).catch(() => {});
       }
@@ -26,8 +27,9 @@ module.exports = async function handler(req, res) {
       const response = {
         credits: result.credits,
         installId,
-        expired: result.expired,
-        expiresAt: result.expiresAt,
+        expired: entitlement.unlimited ? false : result.expired,
+        expiresAt: entitlement.unlimited ? null : result.expiresAt,
+        unlimited: entitlement.unlimited === true,
       };
 
       // If ?history=1, include transaction log (purchases + deductions)
@@ -59,11 +61,12 @@ module.exports = async function handler(req, res) {
         const redis = getRedis();
         const installKey = keys.install(installId);
         const raw = await redis.get(installKey);
-        const data = raw ? JSON.parse(raw) : { createdAt: new Date().toISOString() };
+        const data = safeParse(raw, { createdAt: new Date().toISOString() }) || { createdAt: new Date().toISOString() };
         data.email = email;
         if (name) data.name = name;
         await redis.set(installKey, JSON.stringify(data));
-        return res.status(200).json({ ok: true, email });
+        const entitlement = await getInstallEntitlement(installId, { redis, forceRefresh: true });
+        return res.status(200).json({ ok: true, email, unlimited: entitlement.unlimited === true });
       } catch (err) {
         console.error('saveEmail error:', err);
         return res.status(500).json({ error: 'Internal server error' });
@@ -78,8 +81,19 @@ module.exports = async function handler(req, res) {
     }
 
     try {
+      const entitlement = await getInstallEntitlement(installId);
+
       // Check expiry before deducting
       const current = await getCredits(installId);
+      if (entitlement.unlimited) {
+        return res.status(200).json({
+          credits: current.credits || 0,
+          deducted: 0,
+          expiresAt: null,
+          unlimited: true,
+        });
+      }
+
       if (current.expired || current.credits === 0) {
         return res.status(402).json({ error: 'Credits expired', credits: 0, expired: true });
       }
@@ -113,7 +127,7 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      return res.status(200).json({ credits: newBal, deducted: cost, expiresAt: current.expiresAt });
+      return res.status(200).json({ credits: newBal, deducted: cost, expiresAt: current.expiresAt, unlimited: false });
     } catch (err) {
       console.error('Credits POST error:', err);
       return res.status(500).json({ error: 'Internal server error' });

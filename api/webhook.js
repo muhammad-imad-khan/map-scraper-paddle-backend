@@ -3,7 +3,7 @@
 // Auto-credits the user's account using installId from custom_data.
 // Deduplicates by transaction ID so replay attacks are harmless.
 const crypto = require('crypto');
-const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, deliverCoursePurchase, BASE_URL, PADDLE_API_KEY, PADDLE_ENV, PADDLE_WEBHOOK_SECRET } = require('../lib/helpers');
+const { cors, PRICE_CREDITS, addCredits, getRedis, keys, isValidInstallId, sendPurchaseNotification, sendZipDeliveryEmail, deliverCoursePurchase, markInstallUnlimited, BASE_URL, PADDLE_API_KEY, PADDLE_ENV, PADDLE_WEBHOOK_SECRET } = require('../lib/helpers');
 
 // ── Webhook signature verification ─────────────────────
 function verifySignature(rawBody, signature, secret) {
@@ -195,6 +195,14 @@ module.exports = async function handler(req, res) {
       }
 
       await redis.set(userKey, JSON.stringify(userData));
+
+      if (grantsUnlimited) {
+        await markInstallUnlimited(installId, {
+          redis,
+          email: userEmail,
+          name: userData.name,
+        });
+      }
 
       // Send purchase notification email to admin
       sendPurchaseNotification({
