@@ -100,6 +100,23 @@ module.exports = async function handler(req, res) {
     });
 
     if (!deliveryResult.ok && !deliveryResult.alreadySent) {
+      if (deliveryResult.portalAccessGranted) {
+        return res.status(200).json({
+          ok: true,
+          email,
+          alreadySent: false,
+          resent: false,
+          deliveryProvider: deliveryResult.provider || null,
+          driveShared: deliveryResult.driveShared || false,
+          driveError: deliveryResult.driveError,
+          txnVerified,
+          portalAccessGranted: true,
+          portalEmailSent: false,
+          detail: deliveryResult.error || 'email_send_failed',
+          warning: 'Portal access was granted, but the access email could not be sent.',
+        });
+      }
+
       return res.status(502).json({
         error: 'Failed to send course email. Please contact support if this continues.',
         driveShared: deliveryResult.driveShared,
@@ -121,6 +138,7 @@ module.exports = async function handler(req, res) {
       driveError: deliveryResult.driveError,
       txnVerified,
       portalAccessGranted: deliveryResult.portalAccessGranted || false,
+      portalEmailSent: true,
     });
   } catch (err) {
     console.error('Course deliver error:', err);
