@@ -3,7 +3,20 @@
 // Body: { email: "buyer@example.com", name?: "Buyer", priceId?: "pri_..." }
 const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis } = require('../lib/helpers');
 
-const DEFAULT_COURSE_PRICE_ID = process.env.PRICE_COURSE_ID || 'pri_01knj7g8kpj9d1b43ys31ttz53';
+const DEFAULT_COURSE_PRICE_ID = process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty';
+const DEFAULT_COURSE_INTL_PRICE_ID = process.env.PRICE_COURSE_INTL_ID || DEFAULT_COURSE_PRICE_ID;
+
+function resolveCoursePriceId({ requestedPriceId, country, currency }) {
+  const requested = String(requestedPriceId || '').trim();
+  const normalizedCountry = String(country || '').trim();
+  const normalizedCurrency = String(currency || '').trim().toUpperCase();
+  const allowed = new Set([DEFAULT_COURSE_PRICE_ID, DEFAULT_COURSE_INTL_PRICE_ID].filter(Boolean));
+
+  if (requested && allowed.has(requested)) return requested;
+
+  const isPakistan = normalizedCountry === 'Pakistan' || normalizedCurrency === 'PKR';
+  return isPakistan ? DEFAULT_COURSE_PRICE_ID : DEFAULT_COURSE_INTL_PRICE_ID;
+}
 
 function sanitize(str, maxLen = 120) {
   return String(str || '').trim().slice(0, maxLen);
@@ -25,13 +38,18 @@ module.exports = async function handler(req, res) {
   const email = sanitize(req.body?.email, 254).toLowerCase();
   const name = sanitize(req.body?.name, 100);
   const requestedPriceId = sanitize(req.body?.priceId, 64);
-  const priceId = requestedPriceId || DEFAULT_COURSE_PRICE_ID;
+  const country = sanitize(req.body?.country, 80);
+  const currency = sanitize(req.body?.currency, 8).toUpperCase();
+  const priceId = resolveCoursePriceId({ requestedPriceId, country, currency });
 
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Please provide a valid email address.' });
   }
-  if (!priceId.startsWith('pri_')) {
-    return res.status(400).json({ error: 'Missing or invalid priceId.' });
+  if (!priceId || !priceId.startsWith('pri_')) {
+    return res.status(400).json({
+      error: 'Missing or invalid priceId.',
+      detail: 'Please refresh and re-select your country before checkout.',
+    });
   }
 
   try {

@@ -4,6 +4,29 @@
 // Requires auth. Links payment to user email via custom_data.
 const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, isValidInstallId, initUser, getRedis } = require('../lib/helpers');
 
+const PRICE_MAP = {
+  pro: process.env.PRICE_PRO || 'pri_01kkwtx0kh2skzrzjbxgmgqngd',
+  enterprise: process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d',
+  lifetimePk: process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9',
+  lifetimeIntl: process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz',
+};
+
+function resolvePriceId({ priceId, pack, country, currency }) {
+  const requested = String(priceId || '').trim();
+  const packKey = String(pack || '').trim().toLowerCase();
+  const normalizedCountry = String(country || '').trim();
+  const normalizedCurrency = String(currency || '').trim().toUpperCase();
+
+  const allowed = new Set(Object.values(PRICE_MAP).filter(Boolean));
+  if (requested && allowed.has(requested)) return requested;
+
+  const isPakistan = normalizedCountry === 'Pakistan' || normalizedCurrency === 'PKR';
+  if (packKey === 'pro') return PRICE_MAP.pro;
+  if (packKey === 'enterprise') return PRICE_MAP.enterprise;
+  if (packKey === 'lifetime') return isPakistan ? PRICE_MAP.lifetimePk : PRICE_MAP.lifetimeIntl;
+  return null;
+}
+
 module.exports = async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -13,7 +36,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'PADDLE_API_KEY not configured' });
   }
 
-  const { priceId, installId, token } = req.body || {};
+  const { priceId, installId, token, pack, country, currency } = req.body || {};
 
   // ── Verify auth token ──
   if (!token || typeof token !== 'string') {
@@ -27,8 +50,12 @@ module.exports = async function handler(req, res) {
   const session = JSON.parse(sessionRaw);
   const userEmail = session.email;
 
-  if (!priceId || !priceId.startsWith('pri_')) {
-    return res.status(400).json({ error: 'Missing or invalid priceId' });
+  const resolvedPriceId = resolvePriceId({ priceId, pack, country, currency });
+  if (!resolvedPriceId) {
+    return res.status(400).json({
+      error: 'Missing or invalid priceId',
+      detail: 'Please refresh pricing and try again. Selected region pricing may be unavailable.',
+    });
   }
   if (!isValidInstallId(installId)) {
     return res.status(400).json({ error: 'Missing or invalid installId' });
@@ -40,7 +67,7 @@ module.exports = async function handler(req, res) {
   try {
     // Create a transaction via Paddle API with custom_data containing installId + user email
     const data = await paddleRequest('/transactions', {
-      items: [{ price_id: priceId, quantity: 1 }],
+      items: [{ price_id: resolvedPriceId, quantity: 1 }],
       custom_data: { installId, email: userEmail },
     });
 
@@ -51,7 +78,7 @@ module.exports = async function handler(req, res) {
       const userData = JSON.parse(userRaw);
       if (!userData.purchases) userData.purchases = [];
       userData.purchases.push({
-        priceId,
+        priceId: resolvedPriceId,
         installId,
         status: 'pending',
         createdAt: new Date().toISOString(),

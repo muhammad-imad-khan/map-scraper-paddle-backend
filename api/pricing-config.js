@@ -64,17 +64,41 @@ async function getPricingMode() {
 }
 
 function buildPublicPricing(mode) {
+  const proPrice = process.env.PRICE_PRO_LABEL || '$5';
+  const proPriceId = process.env.PRICE_PRO || 'pri_01kkwtx0kh2skzrzjbxgmgqngd';
+  const enterprisePrice = process.env.PRICE_ENTERPRISE_LABEL || '$25';
+  const enterprisePriceId = process.env.PRICE_ENTERPRISE || 'pri_01kkwtyfwvrwspy654f56h4n5d';
   const oneTimePrice = process.env.PRICE_ONE_TIME_LABEL || '$5.99';
   const oneTimePriceId = process.env.PRICE_ONE_TIME_ID || 'pri_01knfqkcbhqbnwhq5k1ace3sd9';
   const oneTimeIntlPrice = process.env.PRICE_ONE_TIME_INTL_LABEL || '$20';
   const oneTimeIntlPriceId = process.env.PRICE_ONE_TIME_INTL_ID || 'pri_01knfsscfv6njhwwb40k8p6mwz';
+  const coursePrice = process.env.PRICE_COURSE_LABEL || '$10';
+  const coursePriceId = process.env.PRICE_COURSE_ID || 'pri_01knmdy54t0wd91ne4tspntxty';
+  const courseIntlPrice = process.env.PRICE_COURSE_INTL_LABEL || '$10';
+  const courseIntlPriceId = process.env.PRICE_COURSE_INTL_ID || coursePriceId;
+
+  const countryCurrency = {
+    Pakistan: 'PKR',
+    'United Arab Emirates': 'AED',
+    'Saudi Arabia': 'SAR',
+    'United Kingdom': 'GBP',
+    'United States': 'USD',
+    Canada: 'CAD',
+    Australia: 'AUD',
+    Germany: 'EUR',
+    India: 'INR',
+  };
+
   return {
     mode,
+    countryCurrency,
     plans: {
-      pro: { price: '$5', credits: 500, label: 'Pro Pack' },
-      enterprise: { price: '$25', credits: 2500, label: 'Enterprise Pack' },
+      pro: { price: proPrice, credits: 500, label: 'Pro Pack', priceId: proPriceId },
+      enterprise: { price: enterprisePrice, credits: 2500, label: 'Enterprise Pack', priceId: enterprisePriceId },
       oneTime: { price: oneTimePrice, label: 'Lifetime License', priceId: oneTimePriceId },
       oneTimeIntl: { price: oneTimeIntlPrice, label: 'Lifetime License', priceId: oneTimeIntlPriceId },
+      course: { price: coursePrice, label: 'Lead Gen x AI Web Design Course', priceId: coursePriceId },
+      courseIntl: { price: courseIntlPrice, label: 'Lead Gen x AI Web Design Course', priceId: courseIntlPriceId },
     },
   };
 }
