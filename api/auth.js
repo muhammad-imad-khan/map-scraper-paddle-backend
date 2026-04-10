@@ -2,7 +2,7 @@
 // Actions: register, login, me, logout
 // Stores users in Redis with PBKDF2 password hashing
 const crypto = require('crypto');
-const { cors, getRedis, PRICE_IDS } = require('../lib/helpers');
+const { cors, getRedis, PRICE_IDS, isValidInstallId, markInstallUnlimited } = require('../lib/helpers');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -222,6 +222,45 @@ module.exports = async function handler(req, res) {
           zipDownload: hasLifetimeAccess,
           courseAccess: hasCourseAccess,
         },
+      });
+    }
+
+    // ── EXT-LOGIN (extension login with installId linking) ──
+    if (action === 'ext-login') {
+      const email = sanitize(req.body.email, 254).toLowerCase();
+      const password = req.body.password || '';
+      const installId = sanitize(req.body.installId, 120);
+
+      if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+
+      const userKey = authKeys.user(email);
+      const raw = await redis.get(userKey);
+      if (!raw) return res.status(401).json({ error: 'Invalid email or password.' });
+
+      const userData = JSON.parse(raw);
+      const hash = await hashPassword(password, userData.salt);
+      if (hash !== userData.passwordHash) return res.status(401).json({ error: 'Invalid email or password.' });
+
+      // Check lifetime entitlement
+      const purchases = Array.isArray(userData.purchases) ? userData.purchases : [];
+      const lifetimePriceIds = getLifetimePriceIds();
+      const hasLifetimeAccess = purchases.some(p =>
+        p && p.status === 'completed' && (
+          lifetimePriceIds.has(p.priceId) ||
+          String(p.label || '').toLowerCase().includes('lifetime') ||
+          p.unlimited === true
+        )
+      );
+
+      // If user has lifetime access and provided a valid installId, mark it unlimited
+      if (hasLifetimeAccess && installId && isValidInstallId(installId)) {
+        await markInstallUnlimited(installId, { redis, email: userData.email, name: userData.name });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        user: { name: userData.name, email: userData.email },
+        entitlements: { lifetimeAccess: hasLifetimeAccess },
       });
     }
 
