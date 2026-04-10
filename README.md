@@ -1,4 +1,4 @@
-# Lead Gen X Map Scrapper — Paddle Payment Backend
+# LEAD GEN x AI Powered Tool — Paddle Payment Backend
 
 ## Why Paddle?
 - ✅ Supports **Pakistan as a seller country**
@@ -26,9 +26,9 @@ Go to **Catalog → Products → New Product** and create 3 products:
 
 | Product Name                          | Price | Type    |
 |---------------------------------------|-------|---------|
-| Lead Gen X Map Scrapper — 100 Credits       | $5    | One-time|
-| Lead Gen X Map Scrapper — 500 Credits       | $19   | One-time|
-| Lead Gen X Map Scrapper — 1000 Credits      | $35   | One-time|
+| LEAD GEN x AI Powered Tool — 100 Credits       | $5    | One-time|
+| LEAD GEN x AI Powered Tool — 500 Credits       | $19   | One-time|
+| LEAD GEN x AI Powered Tool — 1000 Credits      | $35   | One-time|
 
 After creating each product, go to **Prices** tab and copy the **Price ID** (starts with `pri_`).
 
@@ -118,7 +118,7 @@ const transport = nodemailer.createTransport({
 await transport.sendMail({
   from: process.env.SMTP_FROM || process.env.SMTP_USER,
   to: email,
-  subject: 'Your Lead Gen X Map Scrapper credits are ready',
+  subject: 'Your LEAD GEN x AI Powered Tool credits are ready',
   html: `<p>Hi ${name || 'there'},</p><p>Your license key: <strong>${licenseKey}</strong></p>`,
 });
 ```

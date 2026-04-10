@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-//  Lead Gen X Map Scrapper — Paddle Payment Backend (Fixed)
+//  LEAD GEN x AI Powered Tool — Paddle Payment Backend (Fixed)
 //  npm install express cors dotenv crypto
 // ═══════════════════════════════════════════════════════════════
 
@@ -60,7 +60,7 @@ async function paddleRequest(path, options = {}) {
 }
 
 app.get('/', (_req, res) => {
-  res.json({ name: 'Lead Gen X Map Scrapper API', version: '2.0.0', env: PADDLE_ENV,
+  res.json({ name: 'LEAD GEN x AI Powered Tool API', version: '2.0.0', env: PADDLE_ENV,
     routes: ['/api/health', '/api/packs', '/api/payment-config', '/api/checkout', '/api/verify-license', '/api/webhook'] });
 });
 
