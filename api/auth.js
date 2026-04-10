@@ -199,6 +199,16 @@ module.exports = async function handler(req, res) {
           p.unlimited === true
         )
       );
+      const coursePriceIds = new Set([
+        String(PRICE_IDS.course || '').trim(),
+        String(PRICE_IDS.courseIntl || '').trim(),
+      ].filter(Boolean));
+      const hasCourseAccess = purchases.some(p =>
+        p && p.status === 'completed' && (
+          coursePriceIds.has(p.priceId) ||
+          String(p.label || '').toLowerCase().includes('course')
+        )
+      );
       return res.status(200).json({
         ok: true,
         user: {
@@ -210,6 +220,7 @@ module.exports = async function handler(req, res) {
         entitlements: {
           lifetimeAccess: hasLifetimeAccess,
           zipDownload: hasLifetimeAccess,
+          courseAccess: hasCourseAccess,
         },
       });
     }
