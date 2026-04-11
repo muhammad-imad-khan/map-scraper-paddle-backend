@@ -2,8 +2,8 @@
  * Detailed Workflow Tests: Customer Journey & Admin Workflows
  * 
  * Tests specific workflows:
- * 1. Complete card purchase → validation → course access
- * 2. Complete bank transfer → receipt → validation → course access
+ * 1. Complete card purchase â†’ validation â†’ course access
+ * 2. Complete bank transfer â†’ receipt â†’ validation â†’ course access
  * 3. Multiple purchases by same customer
  * 4. Admin resend email workflow
  * 5. Monitoring performance under multiple validations
@@ -11,7 +11,7 @@
 
 require('dotenv').config({ path: '.env.production' });
 
-const API_BASE = process.env.API_BASE || 'https://map-scraper-paddle-backend.vercel.app';
+const API_BASE = process.env.API_BASE || 'https://leadgenx-api.vercel.app';
 const ADMIN_KEY = process.env.ADMIN_API_KEY || '';
 const TEST_COURSE = 'lead-gen-ai-web-design';
 
@@ -26,7 +26,7 @@ const colors = {
 };
 
 function log(level, msg) {
-  const icon = { info: 'ℹ', success: '✅', error: '❌', warn: '⚠️' }[level] || '•';
+  const icon = { info: 'â„¹', success: 'âœ…', error: 'âŒ', warn: 'âš ï¸' }[level] || 'â€¢';
   console.log(`${colors[level]}${icon} ${msg}${colors.reset}`);
 }
 
@@ -58,13 +58,13 @@ async function test(name, fn) {
   }
 }
 
-// ═════════════════════════════════════════════════════════════
-// WORKFLOW 1: Card Purchase → Validation → Access
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WORKFLOW 1: Card Purchase â†’ Validation â†’ Access
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function workflowCardPurchase() {
-  console.log('\n📦 WORKFLOW 1: Card Purchase → Validation → Course Access');
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('\nðŸ“¦ WORKFLOW 1: Card Purchase â†’ Validation â†’ Course Access');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n');
 
   let cardPurchase = null;
   let enrollment = null;
@@ -76,7 +76,7 @@ async function workflowCardPurchase() {
     const card = purchases.find(p => p.source === 'card');
     if (!card) throw new Error('No pending card purchase found');
     cardPurchase = card;
-    log('info', `  → Found: ${card.email} | ${card.courseId} | ${card.amount}${card.currency || ''}`);
+    log('info', `  â†’ Found: ${card.email} | ${card.courseId} | ${card.amount}${card.currency || ''}`);
   });
 
   await test('Step 2: Admin validates card purchase with dual emails', async () => {
@@ -96,7 +96,7 @@ async function workflowCardPurchase() {
     if (res.status !== 200) throw new Error(`Status ${res.status}: ${res.data.error}`);
     if (!res.data.result?.enrollment) throw new Error('No enrollment in response');
     enrollment = res.data.result.enrollment;
-    log('info', `  → Status: ${enrollment.status} | Granted: ${enrollment.grantedAt}`);
+    log('info', `  â†’ Status: ${enrollment.status} | Granted: ${enrollment.grantedAt}`);
   });
 
   await test('Step 3: Verify course access immediately available', async () => {
@@ -107,7 +107,7 @@ async function workflowCardPurchase() {
       e.email === enrollment.email && e.courseId === enrollment.courseId
     );
     if (!found) throw new Error('Enrollment not found in system');
-    log('info', `  → Enrollment active: ${found.status} | Course: ${found.courseId}`);
+    log('info', `  â†’ Enrollment active: ${found.status} | Course: ${found.courseId}`);
   });
 
   await test('Step 4: Verify course details accessible', async () => {
@@ -116,7 +116,7 @@ async function workflowCardPurchase() {
     if (res.status !== 200) throw new Error(`Status ${res.status}`);
     const course = (res.data.items || []).find(c => c.id === enrollment.courseId);
     if (!course) throw new Error(`Course ${enrollment.courseId} not found`);
-    log('info', `  → Course: ${course.title} | Modules: ${(course.modules || []).length}`);
+    log('info', `  â†’ Course: ${course.title} | Modules: ${(course.modules || []).length}`);
   });
 
   await test('Step 5: Admin can resend course email if needed', async () => {
@@ -128,17 +128,17 @@ async function workflowCardPurchase() {
     };
     const res = await api(`/api/admin-courses`, 'POST', payload);
     if (res.status !== 200) throw new Error(`Status ${res.status}`);
-    log('info', `  → Email action: ${res.data.message}`);
+    log('info', `  â†’ Email action: ${res.data.message}`);
   });
 }
 
-// ═════════════════════════════════════════════════════════════
-// WORKFLOW 2: Bank Transfer → Receipt → Validation
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WORKFLOW 2: Bank Transfer â†’ Receipt â†’ Validation
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function workflowBankTransfer() {
-  console.log('\n🏦 WORKFLOW 2: Bank Transfer → Receipt Review → Validation');
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('\nðŸ¦ WORKFLOW 2: Bank Transfer â†’ Receipt Review â†’ Validation');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n');
 
   let transfer = null;
 
@@ -147,11 +147,11 @@ async function workflowBankTransfer() {
     if (res.status !== 200) throw new Error(`Status ${res.status}`);
     const transfers = res.data.items || [];
     if (transfers.length === 0) {
-      log('warn', '  → No pending transfers (skipping remaining steps)');
+      log('warn', '  â†’ No pending transfers (skipping remaining steps)');
       return;
     }
     transfer = transfers[0];
-    log('info', `  → Found: ${transfer.email} | ${transfer.amount}${transfer.currency || ''}`);
+    log('info', `  â†’ Found: ${transfer.email} | ${transfer.amount}${transfer.currency || ''}`);
   });
 
   if (!transfer) {
@@ -160,7 +160,7 @@ async function workflowBankTransfer() {
     await test('Step 2: Admin checks receipt if provided', async () => {
       if (!transfer) throw new Error('No transfer');
       const hasReceipt = transfer.receiptDataUrl || transfer.receiptDataUrl === 'link';
-      log('info', `  → Receipt: ${hasReceipt ? 'uploaded' : 'not provided'}`);
+      log('info', `  â†’ Receipt: ${hasReceipt ? 'uploaded' : 'not provided'}`);
     });
 
     await test('Step 3: Admin validates bank transfer', async () => {
@@ -178,7 +178,7 @@ async function workflowBankTransfer() {
       };
       const res = await api(`/api/admin-courses`, 'POST', payload);
       if (res.status !== 200) throw new Error(`Status ${res.status}: ${res.data.error}`);
-      log('info', `  → Transfer status: ${res.data.transfer?.status || 'N/A'}`);
+      log('info', `  â†’ Transfer status: ${res.data.transfer?.status || 'N/A'}`);
     });
 
     await test('Step 4: Verify bank transfer moved to approved', async () => {
@@ -186,18 +186,18 @@ async function workflowBankTransfer() {
       const res = await api(`/api/admin-courses?type=transfers&status=pending`);
       if (res.status !== 200) throw new Error(`Status ${res.status}`);
       const stillPending = (res.data.items || []).find(t => t.id === transfer.id);
-      log('info', `  → Transfer moved from pending: ${!stillPending}`);
+      log('info', `  â†’ Transfer moved from pending: ${!stillPending}`);
     });
   }
 }
 
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // WORKFLOW 3: Monitoring Multiple Validations
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function workflowMonitoring() {
-  console.log('\n📊 WORKFLOW 3: Monitoring & Metrics');
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('\nðŸ“Š WORKFLOW 3: Monitoring & Metrics');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n');
 
   await test('Step 1: Retrieve 7-day validation metrics', async () => {
     const res = await api(`/api/admin-courses`, 'POST', {
@@ -206,12 +206,12 @@ async function workflowMonitoring() {
     });
     if (res.status !== 200) throw new Error(`Status ${res.status}`);
     const stats = res.data.stats;
-    log('info', `  → Total validations: ${stats.totalValidations}`);
-    log('info', `  → By card: ${stats.bySource?.card || 0}`);
-    log('info', `  → By bank: ${stats.bySource?.bank_transfer || 0}`);
+    log('info', `  â†’ Total validations: ${stats.totalValidations}`);
+    log('info', `  â†’ By card: ${stats.bySource?.card || 0}`);
+    log('info', `  â†’ By bank: ${stats.bySource?.bank_transfer || 0}`);
     if (stats.totalValidations > 0) {
       const rate = Math.round(((stats.byStatus?.success || 0) / stats.totalValidations) * 100);
-      log('info', `  → Success rate: ${rate}%`);
+      log('info', `  â†’ Success rate: ${rate}%`);
     }
   });
 
@@ -224,9 +224,9 @@ async function workflowMonitoring() {
     const logs = res.data.logs || [];
     if (logs.length > 0) {
       const recent = logs[logs.length - 1];
-      log('info', `  → Most recent: ${recent.email} | ${recent.source} | ${recent.status}`);
+      log('info', `  â†’ Most recent: ${recent.email} | ${recent.source} | ${recent.status}`);
     } else {
-      log('info', `  → No validations recorded yet`);
+      log('info', `  â†’ No validations recorded yet`);
     }
   });
 
@@ -239,7 +239,7 @@ async function workflowMonitoring() {
     const byDate = res.data.stats?.byDate || {};
     const dates = Object.keys(byDate);
     if (dates.length > 0) {
-      log('info', `  → Validations across ${dates.length} days`);
+      log('info', `  â†’ Validations across ${dates.length} days`);
       dates.slice(0, 3).forEach(d => {
         log('info', `     ${d}: ${byDate[d]} validations`);
       });
@@ -247,13 +247,13 @@ async function workflowMonitoring() {
   });
 }
 
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // WORKFLOW 4: Schema and Data Consistency
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function workflowConsistency() {
-  console.log('\n🔍 WORKFLOW 4: Data Consistency & Schema');
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('\nðŸ” WORKFLOW 4: Data Consistency & Schema');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n');
 
   await test('Step 1: All purchases have consistent schema', async () => {
     const res = await api(`/api/admin-courses?type=purchases&status=all`);
@@ -269,7 +269,7 @@ async function workflowConsistency() {
         }
       });
     });
-    log('info', `  → All ${Math.min(10, purchases.length)} sampled purchases valid`);
+    log('info', `  â†’ All ${Math.min(10, purchases.length)} sampled purchases valid`);
   });
 
   await test('Step 2: Card purchases have null receipts', async () => {
@@ -281,7 +281,7 @@ async function workflowConsistency() {
       if (c.receiptName !== null) throw new Error(`Card ${c.id} has non-null receiptName`);
     });
     if (cards.length > 0) {
-      log('info', `  → All ${cards.length} card purchases: receipt=null ✓`);
+      log('info', `  â†’ All ${cards.length} card purchases: receipt=null âœ“`);
     }
   });
 
@@ -295,7 +295,7 @@ async function workflowConsistency() {
       }
     });
     if (banks.length > 0) {
-      log('info', `  → All ${banks.length} bank transfers: receipt field present ✓`);
+      log('info', `  â†’ All ${banks.length} bank transfers: receipt field present âœ“`);
     }
   });
 
@@ -315,19 +315,19 @@ async function workflowConsistency() {
         throw new Error(`Enrollment ${e.email} enrolled in non-existent course ${e.courseId}`);
       }
     });
-    log('info', `  → All ${Math.min(10, enrollments.length)} enrollments linked to valid courses`);
+    log('info', `  â†’ All ${Math.min(10, enrollments.length)} enrollments linked to valid courses`);
   });
 }
 
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // RUN ALL WORKFLOWS
-// ═════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async function runAllWorkflows() {
   console.log('\n');
-  console.log('╔═══════════════════════════════════════════════════════════╗');
-  console.log('║     DETAILED WORKFLOW TESTING: Customer → Admin Journey     ║');
-  console.log('╚═══════════════════════════════════════════════════════════╝');
+  console.log('â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—');
+  console.log('â•‘     DETAILED WORKFLOW TESTING: Customer â†’ Admin Journey     â•‘');
+  console.log('â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
   
   try {
     await workflowCardPurchase();
@@ -340,24 +340,24 @@ async function runAllWorkflows() {
 
   // Summary
   console.log('\n');
-  console.log('═══════════════════════════════════════════════════════════');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
   console.log('                   WORKFLOW TEST SUMMARY');
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log(`✅ Passed:  ${results.passed}`);
-  console.log(`❌ Failed:  ${results.failed}`);
-  console.log(`📊 Total:   ${results.passed + results.failed}`);
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+  console.log(`âœ… Passed:  ${results.passed}`);
+  console.log(`âŒ Failed:  ${results.failed}`);
+  console.log(`ðŸ“Š Total:   ${results.passed + results.failed}`);
   
   if (results.failed === 0) {
-    console.log('\n🎉 All workflow tests passed!');
+    console.log('\nðŸŽ‰ All workflow tests passed!');
   } else {
-    console.log('\n❌ Failed tests:');
+    console.log('\nâŒ Failed tests:');
     results.tests.filter(t => t.status === 'FAIL').forEach(t => {
-      console.log(`   • ${t.name}`);
-      if (t.error) console.log(`     └─ ${t.error}`);
+      console.log(`   â€¢ ${t.name}`);
+      if (t.error) console.log(`     â””â”€ ${t.error}`);
     });
   }
   
-  console.log('═══════════════════════════════════════════════════════════\n');
+  console.log('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•\n');
 
   process.exit(results.failed > 0 ? 1 : 0);
 }

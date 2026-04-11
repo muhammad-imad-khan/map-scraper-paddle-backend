@@ -16,7 +16,7 @@ jest.mock('../lib/helpers', () => ({
   isValidInstallId: jest.fn(() => true),
   initUser: jest.fn(),
   getRedis: jest.fn(() => mockRedis),
-  FRONTEND_URL: 'https://map-scrapper-five.vercel.app',
+  FRONTEND_URL: 'https://lead-genx.vercel.app',
   PRICE_IDS: {
     course: 'pri_test_course',
     courseIntl: 'pri_test_course_intl',
