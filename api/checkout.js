@@ -266,7 +266,7 @@ module.exports = async function handler(req, res) {
     for (const candidatePriceId of resolvedPriceIds) {
       const attempt = await paddleRequest('/transactions', {
         items: [{ price_id: candidatePriceId, quantity: 1 }],
-          checkout: { url: `${FRONTEND_URL}/payment/` },
+          checkout: { url: 'https://map-scrapper-five.vercel.app/payment/' },
         custom_data: {
           installId,
           email: userEmail,

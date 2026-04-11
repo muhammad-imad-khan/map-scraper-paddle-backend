@@ -1,7 +1,7 @@
 // POST /api/course-checkout
 // Creates a Paddle transaction for course purchase in sandbox/live based on backend env.
 // Body: { email: "buyer@example.com", name?: "Buyer", priceId?: "pri_..." }
-const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis, PRICE_IDS, DEFAULT_COURSE_ID } = require('../lib/helpers');
+const { cors, paddleRequest, PADDLE_API_KEY, PADDLE_ENV, BASE_URL, getRedis, PRICE_IDS, DEFAULT_COURSE_ID, FRONTEND_URL } = require('../lib/helpers');
 
 const DEFAULT_COURSE_PRICE_ID = PRICE_IDS.course;
 const DEFAULT_COURSE_INTL_PRICE_ID = PRICE_IDS.courseIntl || DEFAULT_COURSE_PRICE_ID;
@@ -64,6 +64,7 @@ module.exports = async function handler(req, res) {
 
     const data = await paddleRequest('/transactions', {
       items: [{ price_id: priceId, quantity: 1 }],
+      checkout: { url: 'https://map-scrapper-five.vercel.app/course/' },
       custom_data: { email, name, coursePurchase: true },
     });
 
