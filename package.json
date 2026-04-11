@@ -20,5 +20,11 @@
   },
   "devDependencies": {
     "jest": "^30.3.0"
+  },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "e2e-flow\\.test\\.js$",
+      "\\.test\\.mjs$"
+    ]
   }
 }

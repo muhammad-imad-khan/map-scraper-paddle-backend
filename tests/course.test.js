@@ -31,7 +31,7 @@ process.env.COURSE_LINK = 'https://drive.google.com/drive/folders/test-folder';
 process.env.PRICE_COURSE_ID = 'pri_test_course';
 process.env.REDIS_URL = 'redis://localhost:6379';
 
-const helpers = require('../api/_helpers');
+const helpers = require('../lib/helpers');
 
 // ── Helper to build a valid Paddle webhook signature ──
 function buildSignature(body, secret) {
@@ -83,7 +83,7 @@ describe('sendCourseDeliveryEmail', () => {
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     const call = mockSendMail.mock.calls[0][0];
     expect(call.to).toBe('buyer@example.com');
-    expect(call.subject).toContain('Course is Ready');
+    expect(call.subject).toContain('Course Access Is Ready');
     expect(call.html).toContain('drive.google.com');
     expect(call.html).toContain('Test Buyer');
     expect(call.html).toContain('txn_test_123');
@@ -108,7 +108,7 @@ describe('sendCourseDeliveryEmail', () => {
 
     const html = mockSendMail.mock.calls[0][0].html;
     expect(html).toContain('Lead Generation');
-    expect(html).toContain('Lifetime');
+    expect(html).toContain('AI Powered Web Design Course');
   });
 
   test('email should come from Imad Khan Courses', async () => {
